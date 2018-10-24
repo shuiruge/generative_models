@@ -1,5 +1,5 @@
 import os
-from tqdm import tqdm
+from tqdm import trange
 import numpy as np
 import tensorflow as tf
 from tensorflow.examples.tutorials.mnist import input_data
@@ -13,7 +13,8 @@ from tfutils.train import (save_variables, restore_variables,
                            create_frugal_session)
 from tfutils.graph import get_dependent_variables
 from scipy.misc import logsumexp
-from vae import get_loss_X, get_log_p_X
+from vae import BaseVariationalAutoencoder
+from utils import plot_latent
 
 
 # For reproducibility
@@ -120,38 +121,48 @@ def get_bijectors(name='bjiectors', reuse=None):
     return bijectors
 
 
-def logmeanexp(array, axis=None):
-  if axis is None:
-    n = np.sum(array.shape())
-  else:
-    n = np.sum(array.shape, axis=axis, keepdims=True)
-  return logsumexp(array - np.log(n), axis=axis)
+class VariationalAutoencoder(BaseVariationalAutoencoder):
+
+  def __init__(self, batch_size, X_dim, z_dim, use_bijectors, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+
+    self.batch_size = batch_size
+    self.X_dim = X_dim
+    self.z_dim = z_dim
+    self.bijectors = get_bijectors() if use_bijectors else []
+
+  def encoder_dist(self, X, reuse):
+    return get_q_z_X(X, self.z_dim, bijectors=self.bijectors, reuse=reuse)
+
+  def decoder_dist(self, z, reuse):
+    return get_p_X_z(z, X_dim=self.X_dim, reuse=reuse)
+
+  @property
+  def prior(self):
+    return tfd.MultivariateNormalDiag(
+        loc=tf.zeros([self.batch_size, self.z_dim]),
+        scale_diag=tf.ones([self.batch_size, self.z_dim]),
+        name='p_z')
 
 
-def main(n_iters, batch_size=128, z_dim=64, use_bijectors=True):
+def process_X(X_batch):
+  """Makes the pixal of the image either `0` or `1`."""
+  return np.where(X_batch > 0.5,
+                  np.ones_like(X_batch),
+                  np.zeros_like(X_batch))
+
+
+def main(n_iters, batch_size=128, z_dim=2, use_bijectors=True):
 
   # --- Build the graph ---
 
   X_dim = 28 * 28  # for MNIST dataset.
   X = tf.placeholder(shape=[batch_size, X_dim], dtype='float32', name='X')
-  p_z = tfd.MultivariateNormalDiag(
-      loc=tf.zeros([batch_size, z_dim]),
-      scale_diag=tf.sqrt(tf.ones([batch_size, z_dim]) / z_dim),
-      name='p_z')
-
-  def _get_q_z_X(X, reuse):
-    if use_bijectors:
-      bijectors = get_bijectors(reuse=reuse)
-    else:
-      bijectors = []
-    return get_q_z_X(X, z_dim, bijectors=bijectors, reuse=reuse)
-
-  def _get_p_X_z(z, reuse):
-    return get_p_X_z(z, X_dim=X_dim, reuse=reuse)
-
   n_samples = tf.placeholder(shape=[], dtype='int32', name='n_samples')
-  loss_X = get_loss_X(_get_q_z_X, _get_p_X_z, p_z, n_samples=n_samples)
-  loss_X_mcint = loss_X(X)
+  vae = VariationalAutoencoder(batch_size, X_dim, z_dim, use_bijectors,
+                               n_samples=n_samples)
+
+  loss_X_mcint = vae.loss(X)
   loss_X_scalar = tf.reduce_mean(loss_X_mcint.value)
 
   optimizer = tf.train.AdamOptimizer(epsilon=1e-3)
@@ -172,36 +183,39 @@ def main(n_iters, batch_size=128, z_dim=64, use_bijectors=True):
 
   except Exception as e:
     print(e)
-    for step in range(n_iters):
-        n_sample_val = 1 if step < 1000 else 128
+    
+    pbar = trange(n_iters)
+    for step in pbar:
+        n_sample_val = 1 if step < (n_iters // 2) else 128
         X_batch, _ = mnist.train.next_batch(batch_size)
-        feed_dict = {X: X_batch, n_samples: n_sample_val}
-        sess.run([train_op, loss_X_scalar], feed_dict)
+        feed_dict = {X: process_X(X_batch), n_samples: n_sample_val}
+        _, loss_val = sess.run([train_op, loss_X_scalar], feed_dict)
+        pbar.set_description('loss: {0:.2f}'.format(loss_val))
+
     save_variables(sess, None, os.path.join(DATA_DIR, 'checkpoints/vae'))
   
   # --- Evaluation ---
 
-  log_p_X = get_log_p_X(_get_p_X_z, p_z,
-                        n_samples=n_samples,
-                        reuse=tf.AUTO_REUSE)
-  log_p_X_mcint = log_p_X(X)
-
   X_batch, _ = mnist.test.next_batch(batch_size)
-  feed_dict = {X: X_batch, n_samples: 128}
-
+  feed_dict = {X: process_X(X_batch), n_samples: 32}
   loss_vals = sess.run(loss_X_mcint.value, feed_dict)
   loss_error_vals = sess.run(loss_X_mcint.error, feed_dict)
-  log_p_X_vals = sess.run(log_p_X_mcint.value, feed_dict)
-  log_p_X_error_vals = sess.run(log_p_X_mcint.error, feed_dict)
 
   for i, loss_val in enumerate(loss_vals):
     loss_error_val = loss_error_vals[i]
-    log_p_X_val = log_p_X_vals[i]
-    log_p_X_error_val = log_p_X_error_vals[i]
-    print('loss V.S. -ln p(X)  ---  {0:.2f} ({1:.2f})  ---  {2:.2f} ({3:.2f})'
-          .format(loss_val, loss_error_val, -log_p_X_val, log_p_X_error_val))
+    print('loss: {0:.2f} ({1:.2f})'.format(loss_val, loss_error_val))
+
+  # --- Visualization ---
+
+  X_ph = tf.placeholder(shape=[None, X_dim], dtype='float32')
+  encoder_dist = vae.encoder_dist(X_ph, reuse=tf.AUTO_REUSE)
+  latent_sample = encoder_dist.sample()
+  X_batch, y_batch = mnist.test.next_batch(2000)
+  z_batch = sess.run(latent_sample, {X_ph: process_X(X_batch)})
+
+  plot_latent(y_batch, z_batch)
 
 
 if __name__ == '__main__':
 
-    main(n_iters=5000)
+    main(n_iters=10000)
