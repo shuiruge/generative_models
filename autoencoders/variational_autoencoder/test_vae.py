@@ -1,3 +1,25 @@
+"""
+Description
+-----------
+Test the `VariationalAutoencoder` on MNIST dataset. The encoder and decoder
+are both multilayer-perceptrons. Bijectors in the inference are employed.
+
+Conclusion
+----------
+1. The loss approaches about 70 after 20000 iterations, with latent-dimension
+   16, without further fine-tuning.
+1. Also test the loss-per-datum on the test dataset of MNIST. The losses keep
+   the same order as in the training stage.
+1. The loss-per-datum on the noised test dataset keeps the same order as in
+   the training when the noise-ratio is 50%. However, it becomes 10X greater
+   when the noise-ratio is 80%.
+1. The loss-per-datum on the randomly generated fake dataset is 20X greater
+   than that in the training.
+1. Variational auto-encoder can, thus, also be an anomaly detector, detecting
+   the exotic data mixing into a given dataset.
+"""
+
+
 import os
 from tqdm import trange
 import numpy as np
@@ -14,7 +36,6 @@ from tfutils.train import (save_variables, restore_variables,
 from tfutils.graph import get_dependent_variables
 from scipy.misc import logsumexp
 from vae import BaseVariationalAutoencoder
-from utils import plot_latent
 
 
 # For reproducibility
@@ -152,7 +173,22 @@ def process_X(X_batch):
                   np.zeros_like(X_batch))
 
 
-def main(n_iters, batch_size=128, z_dim=2, use_bijectors=True):
+def generate_random_X(batch_size):
+  return np.random.uniform(size=[batch_size, 28*28])
+
+
+def add_noise(X_batch, noise_ratio):
+  # Add noise
+  noise = np.random.uniform(low=-noise_ratio, high=noise_ratio,
+                            size=X_batch.shape)
+  X_batch = X_batch + noise
+  # Bound it
+  X_batch = np.where(X_batch > 1.0, np.ones_like(X_batch), X_batch)
+  X_batch = np.where(X_batch < 0.0, np.zeros_like(X_batch), X_batch)
+  return X_batch
+
+
+def main(n_iters, batch_size=128, z_dim=16, use_bijectors=True):
 
   # --- Build the graph ---
 
@@ -197,7 +233,7 @@ def main(n_iters, batch_size=128, z_dim=2, use_bijectors=True):
   # --- Evaluation ---
 
   X_batch, _ = mnist.test.next_batch(batch_size)
-  feed_dict = {X: process_X(X_batch), n_samples: 32}
+  feed_dict = {X: process_X(X_batch), n_samples: 128}
   loss_vals = sess.run(loss_X_mcint.value, feed_dict)
   loss_error_vals = sess.run(loss_X_mcint.error, feed_dict)
 
@@ -205,17 +241,28 @@ def main(n_iters, batch_size=128, z_dim=2, use_bijectors=True):
     loss_error_val = loss_error_vals[i]
     print('loss: {0:.2f} ({1:.2f})'.format(loss_val, loss_error_val))
 
-  # --- Visualization ---
+  # Noised data
+  X_batch, _ = mnist.test.next_batch(batch_size)
+  X_batch = add_noise(X_batch, noise_ratio=0.8)
+  feed_dict = {X: process_X(X_batch), n_samples: 128}
+  loss_vals = sess.run(loss_X_mcint.value, feed_dict)
+  loss_error_vals = sess.run(loss_X_mcint.error, feed_dict)
 
-  X_ph = tf.placeholder(shape=[None, X_dim], dtype='float32')
-  encoder_dist = vae.encoder_dist(X_ph, reuse=tf.AUTO_REUSE)
-  latent_sample = encoder_dist.sample()
-  X_batch, y_batch = mnist.test.next_batch(2000)
-  z_batch = sess.run(latent_sample, {X_ph: process_X(X_batch)})
+  for i, loss_val in enumerate(loss_vals):
+    loss_error_val = loss_error_vals[i]
+    print('noised loss: {0:.2f} ({1:.2f})'.format(loss_val, loss_error_val))
 
-  plot_latent(y_batch, z_batch)
+  # Fake data
+  fake_X_batch = generate_random_X(batch_size=128)
+  feed_dict = {X: process_X(fake_X_batch), n_samples: 128}
+  loss_vals = sess.run(loss_X_mcint.value, feed_dict)
+  loss_error_vals = sess.run(loss_X_mcint.error, feed_dict)
+
+  for i, loss_val in enumerate(loss_vals):
+    loss_error_val = loss_error_vals[i]
+    print('fake loss: {0:.2f} ({1:.2f})'.format(loss_val, loss_error_val))
 
 
 if __name__ == '__main__':
 
-    main(n_iters=10000)
+    main(n_iters=20000)
