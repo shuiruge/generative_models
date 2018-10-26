@@ -1,3 +1,18 @@
+"""
+Description
+-----------
+Defines the interface of variational auto-encoder, `BaseVariationalAutoencoder`.
+
+Also, the lower-bound of the loss is computed, in `LossLowerBound`. However,
+because of the large variance in the Monte-Carlo integral in the computation,
+this lower-bound is far from usable for evaluating the performance of the
+fitting.
+
+Instead, we find that the variance of the Monte-Carlo integral of the loss is
+itself an evaluation to the performance of the fitting.
+"""
+
+
 import abc
 import numpy as np
 import tensorflow as tf
