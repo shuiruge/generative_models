@@ -1,8 +1,5 @@
-# generative_models
+Generative Models (genmod)
+==========================
 
-While I am learning them.
+While I'm learning them. Implemented by _TensorFlow_.
 
-
-## What's new
-
-* Applying normalizing-flow to variational auto-encoder and semi-supervised learning. Found significant improvements on both of the applications.

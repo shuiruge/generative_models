@@ -26,7 +26,7 @@ tfb = tfd.bijectors
 
 
 class BaseVariationalAutoencoder(abc.ABC):
-  """The interface of variational auto-encoder.
+  """The abstract base class of "variational auto-encoder" (Kingma, 2014).
 
   Args:
     n_samples: Positive integer tensor-like object. Based on the golden-rule

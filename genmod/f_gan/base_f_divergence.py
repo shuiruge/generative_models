@@ -1,3 +1,10 @@
+"""
+Description
+-----------
+
+"""
+
+
 import abc
 import tensorflow as tf
 from tfutils.monte_carlo_integral import MonteCarloIntegral
@@ -20,13 +27,15 @@ class BaseFDivergence(abc.ABC):
     \end{equation}
     ```
 
+  References:
+    1. [Nowozin, et al. (2016)](https://arxiv.org/abs/1606.00709).
 
   Args:
     n_samples: Positive integer.
     name: String.
   """
 
-  def __init__(self, n_samples, name='f_diveergence'):
+  def __init__(self, n_samples, name='f_divergence'):
     self.n_samples = n_samples
     self.name = name
 
@@ -106,3 +115,4 @@ class BaseFDivergence(abc.ABC):
       mc_int.error += tf.sqrt(var / tf.cast(self.n_samples, dtype=var.dtype))
 
       return mc_int
+
