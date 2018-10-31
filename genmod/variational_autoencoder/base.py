@@ -20,9 +20,10 @@ from tfutils.monte_carlo_integral import MonteCarloIntegral
 try:
   import tensorflow_probability as tfp  # pylint: disable=E0401
   tfd = tfp.distributions
+  tfb = tfp.bijectors
 except:
   tfd = tf.contrib.distributions
-tfb = tfd.bijectors
+  tfb = tfd.bijectors
 
 
 class BaseVariationalAutoencoder(abc.ABC):

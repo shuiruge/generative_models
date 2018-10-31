@@ -28,19 +28,20 @@ from tensorflow.examples.tutorials.mnist import input_data
 try:
   import tensorflow_probability as tfp  # pylint: disable=E0401
   tfd = tfp.distributions
+  tfb = tfp.bijectors
 except ModuleNotFoundError:
   tfd = tf.contrib.distributions
-tfb = tfd.bijectors
+  tfb = tfd.bijectors
 from tfutils.train import (save_variables, restore_variables,
                            create_frugal_session)
 from tfutils.graph import get_dependent_variables
 from scipy.misc import logsumexp
-from vae import BaseVariationalAutoencoder
+from genmod.variational_autoencoder.base import BaseVariationalAutoencoder
 
 
 # For reproducibility
 SEED = 123
-np.random.seed(SEED)
+np.random.seed(SEED)  # pylint: disable=E1101
 tf.set_random_seed(SEED)
 
 # For data
