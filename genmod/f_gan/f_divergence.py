@@ -1,7 +1,7 @@
 """
 Description
 -----------
-
+Implements the abstract base class of f-divergence.
 """
 
 
@@ -79,22 +79,23 @@ class BaseFDivergence(abc.ABC):
   def __call__(self, data, generative_dist, discriminator):
     """
     Args:
-      data: Tensor with shape [batch_size] + event_shape.
-      generative_dist: Distribution with event-shape as that of the `data`.
+      data: Tensor.
+      generative_dist: Distribution with the same batch-shape and event-shape
+        as the `data`.
       discriminator: Callable with the signature:
         Args:
-          x: Tensor.
+          ambient: Tensor with the same shape as the `data`.
           reuse: Boolean.
         Returns:
-         Tensor with shape `[?]`.
+          An 1-dimensional tensor with the same batch-shape as the `data`.
 
     Returns:
       An instance of scalar `MonteCarloIntegral`.
     """
     with tf.name_scope(self.name):
 
-      def _discriminator(x):
-        return discriminator(x, reuse=tf.AUTO_REUSE)
+      def _discriminator(ambient):
+        return discriminator(ambient, reuse=tf.AUTO_REUSE)
 
       # Initialize for `MonteCarloIntegral`
       mc_int = MonteCarloIntegral(value=0.0, error=0.0)
@@ -115,4 +116,3 @@ class BaseFDivergence(abc.ABC):
       mc_int.error += tf.sqrt(var / tf.cast(self.n_samples, dtype=var.dtype))
 
       return mc_int
-
