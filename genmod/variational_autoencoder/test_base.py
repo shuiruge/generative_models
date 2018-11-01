@@ -34,8 +34,6 @@ except ModuleNotFoundError:
   tfb = tfd.bijectors
 from tfutils.train import (save_variables, restore_variables,
                            create_frugal_session)
-from tfutils.graph import get_dependent_variables
-from scipy.misc import logsumexp
 from genmod.variational_autoencoder.base import BaseVariationalAutoencoder
 
 
@@ -52,22 +50,22 @@ DATA_DIR = os.path.join(SCRIPT_PATH, '../../dat/')
 def get_p_X_z(z, X_dim, hidden_layers=None,
               name='p_X_z', reuse=None):
   """Returns the distribution of P(X|Z).
-  
+
   X | Z ~ Bernoulli( p(Z) ).
-  
+
   Args:
     z: Tensor of the shape `batch_shape + [z_dim]`.
     X_dim: Positive integer.
     hidden_layers: List of positive integers. Defaults to
       `[128, 256, 512]`.
-    
+
   Returns:
     An instance of `tfd.Distribution`, with batch-shape `batch_shape`
     and event-shape `[X_dim]`.
   """
   if hidden_layers is None:
     hidden_layers = [128, 256, 512]
-    
+
   with tf.variable_scope(name, reuse=reuse):
     hidden = z
     for hidden_layer in hidden_layers:
@@ -85,10 +83,10 @@ def get_p_X_z(z, X_dim, hidden_layers=None,
 def get_q_z_X(X, z_dim, hidden_layers=None, bijectors=None,
               name='q_z_X', reuse=None):
   """Returns the distribution of Z | X.
-  
+
   Z = bijector(Z_0), and
   Z_0 | X ~ Normal(mu(X;phi), sigma(X;phi)).
-  
+
   Args:
     X: Tensor with shape `batch_shape + [X_dim]`.
     z_dim: Positive integer.
@@ -96,7 +94,7 @@ def get_q_z_X(X, z_dim, hidden_layers=None, bijectors=None,
       `[512, 256, 128]`.
     bijectors: List of `tfb.Bijector`s. Defaults to an empty
       list.
-    
+
   Returns:
     An instance of `tfd.Distribution`, with batch-shape `batch_shape`
     and event-shape `[z_dim]`.
@@ -105,7 +103,7 @@ def get_q_z_X(X, z_dim, hidden_layers=None, bijectors=None,
     bijectors = []
   if hidden_layers is None:
     hidden_layers = [512, 256, 128]
-    
+
   with tf.variable_scope(name, reuse=reuse):
     hidden = X
     for hidden_layer in hidden_layers:
@@ -115,7 +113,7 @@ def get_q_z_X(X, z_dim, hidden_layers=None, bijectors=None,
     output = tf.layers.dense(hidden, z_dim * 2, activation=None)
     # shape: [batch_size, z_dim]
     mu, log_var = tf.split(output, [z_dim, z_dim], axis=1)
-    
+
     q_z0_X = tfd.MultivariateNormalDiag(mu, tf.exp(log_var))
     chain = tfb.Chain(bijectors)
     q_z_X = tfd.TransformedDistribution(q_z0_X, chain)
@@ -125,17 +123,17 @@ def get_q_z_X(X, z_dim, hidden_layers=None, bijectors=None,
 def get_bijectors(name='bjiectors', reuse=None):
   """Complexify the inference distribution by extra-bijectors like
   normalizing flows.
-  
+
   Returns:
     List of `Bijector`s.
   """
   with tf.variable_scope(name, reuse=reuse):
     bijectors = []
-    #return bijectors  # test!
+    # return bijectors  # test!
     for _ in range(10):
       # Get one bijector
       shift_and_log_scale_fn = \
-        tfb.masked_autoregressive_default_template([128])
+          tfb.masked_autoregressive_default_template([128])
       # MAP is extremely slow in training. Use IAF instead.
       bijector = tfb.Invert(
           tfb.MaskedAutoregressiveFlow(shift_and_log_scale_fn))
@@ -175,7 +173,7 @@ def process_X(X_batch):
 
 
 def generate_random_X(batch_size):
-  return np.random.uniform(size=[batch_size, 28*28])
+  return np.random.uniform(size=[batch_size, 28 * 28])
 
 
 def add_noise(X_batch, noise_ratio):
@@ -220,7 +218,7 @@ def main(n_iters, batch_size=128, z_dim=16, use_bijectors=True):
 
   except Exception as e:
     print(e)
-    
+
     pbar = trange(n_iters)
     for step in pbar:
         n_sample_val = 1 if step < (n_iters // 2) else 128
@@ -230,7 +228,7 @@ def main(n_iters, batch_size=128, z_dim=16, use_bijectors=True):
         pbar.set_description('loss: {0:.2f}'.format(loss_val))
 
     save_variables(sess, None, os.path.join(DATA_DIR, 'checkpoints/vae'))
-  
+
   # --- Evaluation ---
 
   X_batch, _ = mnist.test.next_batch(batch_size)

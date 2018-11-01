@@ -1,7 +1,7 @@
 """
 Description
 -----------
-Defines the interface of variational auto-encoder, `BaseVariationalAutoencoder`.
+Implements the abstract base class of variational auto-encoder.
 
 Also, the lower-bound of the loss is computed, in `LossLowerBound`. However,
 because of the large variance in the Monte-Carlo integral in the computation,
@@ -14,14 +14,13 @@ itself an evaluation to the performance of the fitting.
 
 
 import abc
-import numpy as np
 import tensorflow as tf
 from tfutils.monte_carlo_integral import MonteCarloIntegral
 try:
   import tensorflow_probability as tfp  # pylint: disable=E0401
   tfd = tfp.distributions
   tfb = tfp.bijectors
-except:
+except ImportError:
   tfd = tf.contrib.distributions
   tfb = tfd.bijectors
 
@@ -81,7 +80,7 @@ class BaseVariationalAutoencoder(abc.ABC):
 
   def loss(self, ambient, name='loss'):
     r"""Returns the tensors for L(X) and its error.
-  
+
     Definition:
       ```math
       Denoting $X$ the ambient and $z$ the latent,
@@ -97,7 +96,7 @@ class BaseVariationalAutoencoder(abc.ABC):
       The performance of this fitting by minimizing the loss L(X) over
       a dataset of X can be evaluated by the variance of the Monte-Carlo
       integral in L(X). The integrand
-      
+
       ```python
       p_z = ...  # the unknown likelihood distribution of latent Z.
       q_z = ...  # the inference distribution.
@@ -125,7 +124,7 @@ class BaseVariationalAutoencoder(abc.ABC):
       with tf.name_scope(name):
         # Get the distribution q(z|X) in definition
         encoder_dist = self.encoder_dist(ambient, reuse=tf.AUTO_REUSE)
-        
+
         # Get the distribution p(X|z) in definition
         # [n_samples] + batch_shape + [latent_dim]
         latent_samples = encoder_dist.sample(self.n_samples)
@@ -149,7 +148,7 @@ class BaseVariationalAutoencoder(abc.ABC):
 class LossLowerBound:
   r"""The function ln p(X) by Monte-Carlo integral, which is the lower bound
   of the loss `LossX`.
-  
+
   ```math
   p(X) = E_{z \sim p(z)} \left[ p(X \mid z) \right].
   ```
@@ -183,7 +182,7 @@ class LossLowerBound:
   WARNING:
     This estimation of lower bound of the fitting by the KL-divergence is
     NOT proper, because of its large variance.
-    
+
     Indeed, as the number of samples in the Monte-Carlo integral increases,
     the variance increases, rather than decreasing as what should be expected.
     This is caused by the large variance of p(X|z), which is a multiplication
@@ -220,11 +219,11 @@ class LossLowerBound:
 
   def log_expectation(self, log_samples, name='log_expectation'):
     """ln E[ exp(log_samples) ]
-    
+
     Args:
       log_samples: Tensor of the shape `[n_samples]` + batch-shape +
         event-shape.
-      
+
     Returns:
       Tensor of the shape batch_shape + event-shape.
     """
@@ -238,11 +237,11 @@ class LossLowerBound:
     Args:
       ambient: Tensor of the shape `batch_shape + [ambient_dim]`.
       name: String.
-      
+
     Returns:
       An instance of `MonteCarloIntegral` with shape `batch_shape`.
     """
-    with tf.name_scope(self.base_name):      
+    with tf.name_scope(self.base_name):
       # [n_samples] + batch_shape + [latent_dim]
       latent_samples = self.vae.prior.sample(self.vae.n_samples)
       decoder_dist = self.vae.decoder_dist(latent_samples, reuse=tf.AUTO_REUSE)
