@@ -35,7 +35,7 @@ class BaseFDivergence(abc.ABC):
     name: String.
   """
 
-  def __init__(self, n_samples, name='f_divergence'):
+  def __init__(self, n_samples=32, name='f_divergence'):
     self.n_samples = n_samples
     self.name = name
 
@@ -76,18 +76,24 @@ class BaseFDivergence(abc.ABC):
     """
     pass
 
-  def __call__(self, data, generative_dist, discriminator):
+  def __call__(self, data, generator, discriminator):
     """
     Args:
-      data: Tensor.
-      generative_dist: Distribution with the same batch-shape and event-shape
-        as the `data`.
-      discriminator: Callable with the signature:
+      data: Tensor with shape `[B] + E`, for arbitrary positive integer `B` and
+        tuple of positive integers `E`.
+      generator: Callable with signature:
         Args:
-          ambient: Tensor with the same shape as the `data`.
+          n_samples: Positive integer.
           reuse: Boolean.
         Returns:
-          An 1-dimensional tensor with the same batch-shape as the `data`.
+          Tensor with shape `[n_samples] + E`.
+      discriminator: Callable with the signature:
+        Args:
+          ambient: Tensor with shape `[B1] + E`, for arbitrary positive
+            integer `B1`, and with dtype the same as `data`.
+          reuse: Boolean.
+        Returns:
+          Tensor with shape `[B1]`.
 
     Returns:
       An instance of scalar `MonteCarloIntegral`.
@@ -97,21 +103,25 @@ class BaseFDivergence(abc.ABC):
       def _discriminator(ambient):
         return discriminator(ambient, reuse=tf.AUTO_REUSE)
 
-      # Initialize for `MonteCarloIntegral`
-      mc_int = MonteCarloIntegral(value=0.0, error=0.0)
+      def _generator(n_samples):
+        return generator(n_samples, reuse=tf.AUTO_REUSE)
+
+      # Initialize
+      mc_int = MonteCarloIntegral(value=tf.zeros([]), error=tf.zeros([]))
 
       # E_{x~P} [ g(D(x)) ]
       mc_integrand = self.output_activation(_discriminator(data))  # [B]
-      mean, var = tf.nn.moments(mc_integrand, axes=[0])
+      mean, var = tf.nn.moments(mc_integrand, axes=[0])  # []
       mc_int.value += mean
-      batch_size, *rests = data.get_shape().aslist()
+      batch_size, *rests = data.get_shape().as_list()
       mc_int.error += tf.sqrt(var / tf.cast(batch_size, dtype=var.dtype))
 
       # E_{x~Q} [ -f*( g(D(x)) ) ]
-      samples = generative_dist.sample(self.n_samples)
+      samples = _generator(self.n_samples)  # [self.n_samples] + E
+      samples = tf.cast(samples, data.dtype)
       mc_integrand = -1.0 * self.f_star(
-          self.output_activation(_discriminator(samples)))  # [B]
-      mean, var = tf.nn.moments(mc_integrand, axes=[0])
+          self.output_activation(_discriminator(samples)))  # [self.n_samples]
+      mean, var = tf.nn.moments(mc_integrand, axes=[0])  # []
       mc_int.value += mean
       mc_int.error += tf.sqrt(var / tf.cast(self.n_samples, dtype=var.dtype))
 
