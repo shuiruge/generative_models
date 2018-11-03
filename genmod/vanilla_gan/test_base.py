@@ -15,6 +15,9 @@ from tfutils.train import (save_variables, restore_variables, ALL_VARS,
 from genmod.vanilla_gan import BaseVanillaGAN
 
 
+# Turn off TF warnings
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
 # For reproducibility
 SEED = 123
 np.random.seed(SEED)
@@ -76,8 +79,11 @@ def main(batch_size=128, n_iters=int(1e+5)):
   data = tf.placeholder(shape=[batch_size, ambient_dim],
                         dtype='float32', name='data')
 
-  vanilla_gan = VanillaGan(ambient_dim, latent_dim=8)
-  loss = vanilla_gan.loss(data)
+  gan = VanillaGan(ambient_dim, latent_dim=8)
+  loss = gan.loss(data)
+
+  print('Generator variables:', gan.generator_vars)
+  print('Discriminator variables', gan.discriminator_vars)
 
   # TODO
 
