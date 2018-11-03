@@ -31,7 +31,9 @@ class BaseFDivergence(abc.ABC):
     1. [Nowozin, et al. (2016)](https://arxiv.org/abs/1606.00709).
 
   Args:
-    n_samples: Positive integer.
+    n_samples: Positive integer. Shall be greater than 30 as a thumb-rule
+      for central limit theorem, employed by the Monte-Carlo integral
+      (i.e. the E_{x~Q}[...]).
     name: String.
   """
 
@@ -80,7 +82,9 @@ class BaseFDivergence(abc.ABC):
     """
     Args:
       data: Tensor with shape `[B] + E`, for arbitrary positive integer `B` and
-        tuple of positive integers `E`.
+        tuple of positive integers `E`. The data shall be unbiased and the `B`
+        shall be greater than 30, as a thumb-rule for central limit theorem,
+        employed by the Monte-Carlo integral (i.e. the E_{x~P}[...]).
       generator: Callable with signature:
         Args:
           n_samples: Positive integer.
@@ -97,6 +101,9 @@ class BaseFDivergence(abc.ABC):
 
     Returns:
       An instance of scalar `MonteCarloIntegral`.
+
+    Raises:
+      EventShapeError.
     """
     with tf.name_scope(self.name):
 
@@ -116,13 +123,60 @@ class BaseFDivergence(abc.ABC):
       batch_size, *rests = data.get_shape().as_list()
       mc_int.error += tf.sqrt(var / tf.cast(batch_size, dtype=var.dtype))
 
+      # x ~ Q
+      ambient_samples = _generator(self.n_samples)  # [self.n_samples] + E
+      ambient_samples = tf.cast(ambient_samples, data.dtype)
+      self.check_same_event_shape(data, ambient_samples)
+
       # E_{x~Q} [ -f*( g(D(x)) ) ]
-      samples = _generator(self.n_samples)  # [self.n_samples] + E
-      samples = tf.cast(samples, data.dtype)
       mc_integrand = -1.0 * self.f_star(
-          self.output_activation(_discriminator(samples)))  # [self.n_samples]
+          self.output_activation(
+              _discriminator(ambient_samples)))  # [self.n_samples]
       mean, var = tf.nn.moments(mc_integrand, axes=[0])  # []
       mc_int.value += mean
       mc_int.error += tf.sqrt(var / tf.cast(self.n_samples, dtype=var.dtype))
 
       return mc_int
+
+  def check_same_event_shape(self, data, ambient_samples):
+    """
+    Args:
+      data: Tensor.
+      ambient_samples: Tensor.
+
+    Raises:
+      EventShapeError: If `data` and `ambient_samples` do not share the same
+        event-shape.
+    """
+    if get_event_shape(data) != get_event_shape(ambient_samples):
+      raise EventShapeError('Data "{0}" and ambient-samples "{1}" should '
+                            'share the same event-shape.')
+
+
+def get_event_shape(x):
+  """
+  Args:
+    x: Tensor of the shape `[B] + E` where `B` is the batch_size, and `E` the
+      event-shape.
+
+  Returns:
+    The event-shape `E`, as a list of positive integers.
+  """
+  batch_shape, *event_shape = shape_list(x)
+  return event_shape
+
+
+def shape_list(tensor):
+  """Returns the shape of the tensor `tensor` as a list.
+
+  Args:
+    tensor: Tensor.
+
+  Returns:
+    List of positive integers.
+  """
+  return tensor.get_shape().as_list()
+
+
+class EventShapeError(Exception):
+  pass
