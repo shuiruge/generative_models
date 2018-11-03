@@ -40,7 +40,7 @@ class BaseVariationalAutoencoder(abc.ABC):
     self.base_name = name
 
   @abc.abstractmethod
-  def encoder_dist(self, ambient, reuse):
+  def encoder(self, ambient, reuse):
     """Return the distribution of inference, q(z|X) by giving the ambient X.
 
     Args:
@@ -54,7 +54,7 @@ class BaseVariationalAutoencoder(abc.ABC):
     pass
 
   @abc.abstractmethod
-  def decoder_dist(self, latent, reuse):
+  def decoder(self, latent, reuse):
     """Returns the distribution of likelihood, p(X|z) by giving the latent z.
 
     Args:
@@ -123,18 +123,18 @@ class BaseVariationalAutoencoder(abc.ABC):
     with tf.name_scope(self.base_name):
       with tf.name_scope(name):
         # Get the distribution q(z|X) in definition
-        encoder_dist = self.encoder_dist(ambient, reuse=tf.AUTO_REUSE)
+        encoder = self.encoder(ambient, reuse=tf.AUTO_REUSE)
 
         # Get the distribution p(X|z) in definition
         # [n_samples] + batch_shape + [latent_dim]
-        latent_samples = encoder_dist.sample(self.n_samples)
-        decoder_dist = self.decoder_dist(latent_samples, reuse=tf.AUTO_REUSE)
+        latent_samples = encoder.sample(self.n_samples)
+        decoder = self.decoder(latent_samples, reuse=tf.AUTO_REUSE)
 
         # Get the log_q(z|X) - log_p(z) - log_p(X|z) in definition
         # [n_samples] + batch_shape
-        mc_samples = (encoder_dist.log_prob(latent_samples) -
+        mc_samples = (encoder.log_prob(latent_samples) -
                       self.prior.log_prob(latent_samples) -
-                      decoder_dist.log_prob(ambient))
+                      decoder.log_prob(ambient))
 
         # Get the Monte-Carlo integral in definition
         mean, variance = tf.nn.moments(mc_samples, axes=[0])
@@ -244,9 +244,9 @@ class LossLowerBound:
     with tf.name_scope(self.base_name):
       # [n_samples] + batch_shape + [latent_dim]
       latent_samples = self.vae.prior.sample(self.vae.n_samples)
-      decoder_dist = self.vae.decoder_dist(latent_samples, reuse=tf.AUTO_REUSE)
+      decoder = self.vae.decoder(latent_samples, reuse=tf.AUTO_REUSE)
       # [n_samples] + batch_shape
-      decoder_log_probs = decoder_dist.log_prob(ambient)
+      decoder_log_probs = decoder.log_prob(ambient)
 
       # E_{z~p(z)} [ p(X|z) ]
       # batch_shape

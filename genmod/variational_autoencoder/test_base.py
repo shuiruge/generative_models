@@ -32,7 +32,7 @@ try:
 except ModuleNotFoundError:
   tfd = tf.contrib.distributions
   tfb = tfd.bijectors
-from tfutils.train import (save_variables, restore_variables,
+from tfutils.train import (save_variables, restore_variables, ALL_VARS,
                            create_frugal_session)
 from genmod.variational_autoencoder.base import BaseVariationalAutoencoder
 
@@ -45,6 +45,7 @@ tf.set_random_seed(SEED)
 # For data
 SCRIPT_PATH = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(SCRIPT_PATH, '../../dat/')
+CKPT_DIR = os.path.join(DATA_DIR, 'checkpoints/vae')
 
 
 def get_p_X_z(z, X_dim, hidden_layers=None,
@@ -151,10 +152,10 @@ class VariationalAutoencoder(BaseVariationalAutoencoder):
     self.z_dim = z_dim
     self.bijectors = get_bijectors() if use_bijectors else []
 
-  def encoder_dist(self, X, reuse):
+  def encoder(self, X, reuse):
     return get_q_z_X(X, self.z_dim, bijectors=self.bijectors, reuse=reuse)
 
-  def decoder_dist(self, z, reuse):
+  def decoder(self, z, reuse):
     return get_p_X_z(z, X_dim=self.X_dim, reuse=reuse)
 
   @property
@@ -214,7 +215,7 @@ def main(n_iters, batch_size=128, z_dim=16, use_bijectors=True):
       source_url='http://yann.lecun.com/exdb/mnist/')
 
   try:
-    restore_variables(sess, None, os.path.join(DATA_DIR, 'checkpoints/vae'))
+    restore_variables(sess, ALL_VARS, CKPT_DIR)
 
   except Exception as e:
     print(e)
@@ -227,7 +228,7 @@ def main(n_iters, batch_size=128, z_dim=16, use_bijectors=True):
         _, loss_val = sess.run([train_op, loss_X_scalar], feed_dict)
         pbar.set_description('loss: {0:.2f}'.format(loss_val))
 
-    save_variables(sess, None, os.path.join(DATA_DIR, 'checkpoints/vae'))
+    save_variables(sess, ALL_VARS, CKPT_DIR)
 
   # --- Evaluation ---
 
