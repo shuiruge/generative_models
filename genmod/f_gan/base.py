@@ -6,6 +6,7 @@ Implements the abstract base class of f-GAN.
 
 import abc
 import tensorflow as tf
+from tfutils.graph import get_dependent_variables
 
 
 class BaseFGAN(abc.ABC):
@@ -17,6 +18,10 @@ class BaseFGAN(abc.ABC):
 
   def __init__(self, name='f_GAN'):
     self.name = name
+
+    # Initialize as `None`s
+    self._generator_vars = None
+    self._discriminator_vars = None
 
   @property
   @abc.abstractmethod
@@ -77,6 +82,11 @@ class BaseFGAN(abc.ABC):
       latent_samples = self.prior.sample(n_samples)  # [n_samples] + L
       generator_dist = self.generator(latent_samples, reuse=reuse)
       ambient_samples = generator_dist.sample()  # [n_samples] + E
+
+      # The `tf.Variable`s that the generator depends on,
+      # for the property `self.generator_vars`
+      self._generator_vars = get_dependent_variables(ambient_samples)
+
       return ambient_samples
 
   def loss(self, data):
@@ -88,4 +98,23 @@ class BaseFGAN(abc.ABC):
       An instance of scalar `MonteCarloIntegral`.
     """
     with tf.name_scope(self.name):
-      return self.f_divergance(data, self._generator, self.discriminator)
+      loss_mc_int = self.f_divergance(
+          data, self._generator, self.discriminator)
+
+      # The `tf.Variable`s that the generator depends on,
+      # for the property `self.generator_vars`
+      all_vars = get_dependent_variables(loss_mc_int.value)
+      self._discriminator_vars = [
+          _ for _ in all_vars if _ not in self.generator_vars]
+
+      return loss_mc_int
+
+  @property
+  def generator_vars(self):
+    """Returns a list of `tf.Variable`s that the generator depends on."""
+    return self._generator_vars
+
+  @property
+  def discriminator_vars(self):
+    """Returns a list of `tf.Variable`s that the discriminator depends on."""
+    return self._discriminator_vars
