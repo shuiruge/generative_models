@@ -99,7 +99,7 @@ def main(batch_size=128, n_iters=int(1e+5)):
 
     pbar = trange(n_iters)
     # TODO
-    save_variables(sess, ALL_VARS, CKPT_DIR)
+    # save_variables(sess, ALL_VARS, CKPT_DIR)
 
 
 if __name__ == '__main__':

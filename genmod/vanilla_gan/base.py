@@ -3,6 +3,12 @@ from genmod.f_gan import BaseFDivergence, BaseFGAN
 
 
 class KLDivergence(BaseFDivergence):
+  """The KL-divergence in the "generative adversarial form". C.f. the
+  "Table 2" of reference 1.
+
+  References:
+    1. [Nowozin, et al. (2016)](https://arxiv.org/abs/1606.00709).
+  """
 
   def output_activation(self, x):
     r"""Returns a negative tensor.
