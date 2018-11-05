@@ -17,7 +17,7 @@ import abc
 import tensorflow as tf
 from tfutils.monte_carlo_integral import MonteCarloIntegral
 try:
-  import tensorflow_probability as tfp  # pylint: disable=E0401
+  import tensorflow_probability as tfp
   tfd = tfp.distributions
   tfb = tfp.bijectors
 except ImportError:
@@ -26,11 +26,19 @@ except ImportError:
 
 
 class BaseVariationalAutoencoder(abc.ABC):
-  """The abstract base class of "variational auto-encoder" (Kingma, 2014).
+  """The abstract base class of "variational auto-encoder"[1].
+
+  Notations:
+    B: Batch-shape of any.
+    A: Event-shape of the ambient.
+    L: Event-shape of the latent.
+
+  References:
+    1. [Kingma, et al, 2014](https://arxiv.org/abs/1312.6114).
 
   Args:
-    n_samples: Positive integer tensor-like object. Based on the golden-rule
-      of statistics, it shall be no less than 30.
+    n_samples: Positive integer tensor-like object. Based on the thumb-rule
+      of central limit theorem, it shall be no less than 30.
     name: String.
   """
   def __init__(self,
@@ -41,40 +49,37 @@ class BaseVariationalAutoencoder(abc.ABC):
 
   @abc.abstractmethod
   def encoder(self, ambient, reuse):
-    """Return the distribution of inference, q(z|X) by giving the ambient X.
+    """Return the distribution of inference, Q(Z|x) by giving the ambient x.
 
     Args:
-      ambient: Tensor with shape `batch_shape + [ambient_dim]`.
+      ambient: Tensor with shape `B + E`.
       reuse: Boolean.
 
     Returns:
-      An instance of `tfd.Distribution`, with batch-shape `batch_shape`
-      and event-shape `[z_dim]`.
+      An instance of `tfd.Distribution` with shape `B + L`.
     """
     pass
 
   @abc.abstractmethod
   def decoder(self, latent, reuse):
-    """Returns the distribution of likelihood, p(X|z) by giving the latent z.
+    """Returns the distribution of likelihood, P(X|z) by giving the latent z.
 
     Args:
-      latent: Tensor of the shape `batch_shape + [latent_dim]`.
+      latent: Tensor of the shape `B + L`.
       reuse: Boolean.
 
     Returns:
-      An instance of `tfd.Distribution`, with batch-shape `batch_shape`
-      and event-shape `[ambient_dim]`.
+      An instance of `tfd.Distribution`, with shape `B + A`.
     """
     pass
 
   @property
   @abc.abstractmethod
   def prior(self):
-    """Returns the distribution of prior of latent variable, p(z).
+    """Returns the distribution of prior of latent variable, P(Z).
 
     Returns:
-      An instance of `tfd.Distribution`, with batch-shape `batch_shape`
-      and event-shape `[latent_dim]`.
+      An instance of `tfd.Distribution`, with shape `B + L`.
     """
     pass
 
@@ -86,16 +91,16 @@ class BaseVariationalAutoencoder(abc.ABC):
       Denoting $X$ the ambient and $z$ the latent,
 
       \begin{equation}
-          L(X) := E_{z \sim q(z \mid X)} \left[
-                      \ln q(z \mid X) - \ln p(z) - \ln p(X \mid z)
+          L(x) := E_{z \sim Q(Z \mid x)} \left[
+                      \ln q(z \mid x) - \ln p(z) - \ln p(x \mid z)
                   \right].
       \end{equation}
       ```
 
     Evaluation:
-      The performance of this fitting by minimizing the loss L(X) over
-      a dataset of X can be evaluated by the variance of the Monte-Carlo
-      integral in L(X). The integrand
+      The performance of this fitting by minimizing the loss L(x) over
+      a dataset of x can be evaluated by the variance of the Monte-Carlo
+      integral in L(x). The integrand
 
       ```python
       p_z = ...  # the unknown likelihood distribution of latent Z.
@@ -122,16 +127,16 @@ class BaseVariationalAutoencoder(abc.ABC):
     """
     with tf.name_scope(self.base_name):
       with tf.name_scope(name):
-        # Get the distribution q(z|X) in definition
+        # Get the distribution Q(Z|x) in definition
         encoder = self.encoder(ambient, reuse=tf.AUTO_REUSE)
 
-        # Get the distribution p(X|z) in definition
-        # [n_samples] + batch_shape + [latent_dim]
+        # Get the distribution P(X|z) in definition
+        # [n_samples] + B + L
         latent_samples = encoder.sample(self.n_samples)
         decoder = self.decoder(latent_samples, reuse=tf.AUTO_REUSE)
 
-        # Get the log_q(z|X) - log_p(z) - log_p(X|z) in definition
-        # [n_samples] + batch_shape
+        # Get the log_q(z|x) - log_p(z) - log_p(x|z) in definition
+        # [n_samples] + B
         mc_samples = (encoder.log_prob(latent_samples) -
                       self.prior.log_prob(latent_samples) -
                       decoder.log_prob(ambient))
@@ -143,120 +148,3 @@ class BaseVariationalAutoencoder(abc.ABC):
         loss_error_tensor = tf.sqrt(variance / n_samples_float)
 
         return MonteCarloIntegral(loss_tensor, loss_error_tensor)
-
-
-class LossLowerBound:
-  r"""The function ln p(X) by Monte-Carlo integral, which is the lower bound
-  of the loss `LossX`.
-
-  ```math
-  p(X) = E_{z \sim p(z)} \left[ p(X \mid z) \right].
-  ```
-
-  The error of the Monte-Carlo integral is computed as follow.
-
-  ```math
-  \begin{equation}
-    \delta \ln p(X) = \frac{ \delta p(X) }{ p(X) }.
-  \end{equation}
-  ```
-
-  wherein
-
-  ```math
-  \begin{align}
-    & \left( \frac{ \delta p(X) }{ p(X) } \right)^2 \\
-    = & \frac{
-          \text{Var}_{z \sim p(z)} \left[ p(X \mid z) \right]
-        }{
-          \text{E}_{z \sim p(z)}^2 \left[ p(X \mid z) \right]
-        } \\
-    = & \frac{
-          \text{E}_{z \sim p(z)}^2 \left[ p^2(X \mid z) \right]
-        }{
-          \text{E}_{z \sim p(z)}^2 \left[ p(X \mid z) \right]
-        } - 1.
-  \end{align}
-  ```
-
-  WARNING:
-    This estimation of lower bound of the fitting by the KL-divergence is
-    NOT proper, because of its large variance.
-
-    Indeed, as the number of samples in the Monte-Carlo integral increases,
-    the variance increases, rather than decreasing as what should be expected.
-    This is caused by the large variance of p(X|z), which is a multiplication
-    of p(X_i|z)s where each X_i is for one pixal of the 28*28-pixal picture
-    of the MNIST dataset. (Say, the multiplication of 28*28 independent
-    probabilities all with the value `0.9`, i.e. 0.9**(28*28), is extremely
-    tiny.)
-
-  Args:
-    get_p_X_z: Callable with the signature:
-      Args:
-        z: Tensor of the shape `batch_shape + [z_dim]`.
-        reuse: Boolean.
-      Returns:
-        An instance of `tfd.Distribution`, with batch-shape `batch_shape`
-        and event-shape `[ambient_dim]`.
-    p_z: An instance of `tfd.Distribution`, with batch-shape `batch_size`
-      and event-shape `z_dim`.
-    n_samples: Positive integer.
-    reuse: If reuse the variables in `get_p_X_z`.
-  """
-
-  def __init__(self,
-               variational_autoencoder,
-               epsilon=1e-8,
-               name='LossLowerBound'):
-    self.vae = variational_autoencoder
-    self.epsilon = epsilon
-    self.base_name = name
-
-    self.log_n_samples = tf.log(
-        tf.cast(self.vae.n_samples, self.vae.prior.dtype),
-        name='log_n_samples')
-
-  def log_expectation(self, log_samples, name='log_expectation'):
-    """ln E[ exp(log_samples) ]
-
-    Args:
-      log_samples: Tensor of the shape `[n_samples]` + batch-shape +
-        event-shape.
-
-    Returns:
-      Tensor of the shape batch_shape + event-shape.
-    """
-    with tf.name_scope(name):
-      return tf.reduce_logsumexp(log_samples - self.log_n_samples, axis=0)
-
-  def __call__(self, ambient):
-    """Returns the tensor of ln p(X). This serves as the lower bound of
-    the loss by KL-divergence, evaluating the fitting.
-
-    Args:
-      ambient: Tensor of the shape `batch_shape + [ambient_dim]`.
-      name: String.
-
-    Returns:
-      An instance of `MonteCarloIntegral` with shape `batch_shape`.
-    """
-    with tf.name_scope(self.base_name):
-      # [n_samples] + batch_shape + [latent_dim]
-      latent_samples = self.vae.prior.sample(self.vae.n_samples)
-      decoder = self.vae.decoder(latent_samples, reuse=tf.AUTO_REUSE)
-      # [n_samples] + batch_shape
-      decoder_log_probs = decoder.log_prob(ambient)
-
-      # E_{z~p(z)} [ p(X|z) ]
-      # batch_shape
-      lower_bound_tensor = self.log_expectation(decoder_log_probs,
-                                                name='lower_bound')
-
-      # Error of Monte-Carlo integral
-      square_delta_lower_bound = -1.0 + tf.exp(self.log_expectation(
-          2.0 * (decoder_log_probs - lower_bound_tensor)))
-      delta_lower_bound = tf.sqrt(square_delta_lower_bound,
-                                  name='delta_lower_bound')
-
-      return MonteCarloIntegral(lower_bound_tensor, delta_lower_bound)
