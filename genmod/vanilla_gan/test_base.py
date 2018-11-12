@@ -71,7 +71,7 @@ class VanillaGan(BaseVanillaGAN):
       return output
 
 
-def main(batch_size=128, n_iters=int(1e+5)):
+def main(batch_size=128, n_epoches=10, n_iters=int(1e+5)):
 
   # --- Build the graph ---
 
@@ -85,7 +85,14 @@ def main(batch_size=128, n_iters=int(1e+5)):
   print('Generator variables:', gan.generator_vars)
   print('Discriminator variables', gan.discriminator_vars)
 
-  # TODO
+  # test!
+  from tfutils.graph import get_dependent_variables
+  print(get_dependent_variables(loss.value), '\n')
+
+  max_train_op = tf.train.AdamOptimizer(epsilon=1e-3).minimize(
+      -loss.value, var_list=gan.discriminator_vars)
+  min_train_op = tf.train.AdamOptimizer(epsilon=1e-3).minimize(
+      loss.value, var_list=gan.generator_vars)
 
   # --- Training ---
 
@@ -97,15 +104,37 @@ def main(batch_size=128, n_iters=int(1e+5)):
       one_hot=True,
       source_url='http://yann.lecun.com/exdb/mnist/')
 
+  def get_feed_dict():
+    X_batch, _ = mnist.train.next_batch(batch_size)
+    X_batch = np.where(X_batch > 0.5,
+                       np.ones_like(X_batch),
+                       np.zeros_like(X_batch))
+    yield {data: X_batch}
+
+  def get_train_op():
+    train_op = max_train_op
+    step = 0
+    n_iters_per_epoch = int(n_iters / n_epoches)
+    while True:
+      if (step + 1) % n_iters_per_epoch == 0:  # switch train-op
+        train_op = min_train_op if train_op == max_train_op else max_train_op
+      yield train_op
+
   try:
     restore_variables(sess, ALL_VARS, CKPT_DIR)
 
   except Exception as e:
     print(e)
 
+    train_op = get_train_op()
+    feed_dict = get_feed_dict()
     pbar = trange(n_iters)
-    # TODO
-    # save_variables(sess, ALL_VARS, CKPT_DIR)
+    for step in pbar:
+      _, loss_val = sess.run([next(train_op), loss.value],
+                             feed_dict=next(feed_dict))
+      pbar.set_description('Loss {0:.2f}'.format(loss_val))
+
+    save_variables(sess, ALL_VARS, CKPT_DIR)
 
 
 if __name__ == '__main__':
