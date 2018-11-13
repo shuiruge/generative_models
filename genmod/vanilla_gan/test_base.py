@@ -49,7 +49,7 @@ class VanillaGan(BaseVanillaGAN):
     scale_diag = tf.ones([self.latent_dim])
     return tfd.MultivariateNormalDiag(loc, scale_diag)
 
-  def generator(self, latent, reuse=None):
+  def generator(self, latent, reuse):
     with tf.variable_scope('generator', reuse=reuse):
       hidden = latent
       for i, layer in enumerate(self.gen_layers):
@@ -57,9 +57,9 @@ class VanillaGan(BaseVanillaGAN):
                                  name='hidden_layer_{}'.format(i))
       logits = tf.layers.dense(hidden, self.ambient_dim, activation=None,
                                name='logits')
-      return tfd.Bernoulli(logits=logits)
+      return tf.sigmoid(logits)
 
-  def discriminator(self, ambient, reuse=None):
+  def discriminator(self, ambient, reuse):
     with tf.variable_scope('discriminator', reuse=reuse):
       hidden = ambient
       for i, layer in enumerate(self.discr_layers):
@@ -71,7 +71,7 @@ class VanillaGan(BaseVanillaGAN):
       return output
 
 
-def main(batch_size=128, n_epoches=10, n_iters=int(1e+5)):
+def main(batch_size=128, n_epoches=100, n_iters=int(1e+4)):
 
   # --- Build the graph ---
 
@@ -82,12 +82,8 @@ def main(batch_size=128, n_epoches=10, n_iters=int(1e+5)):
   gan = VanillaGan(ambient_dim, latent_dim=8)
   loss = gan.loss(data)
 
-  print('Generator variables:', gan.generator_vars)
-  print('Discriminator variables', gan.discriminator_vars)
-
-  # test!
-  from tfutils.graph import get_dependent_variables
-  print(get_dependent_variables(loss.value), '\n')
+  print('\nGenerator variables:', gan.generator_vars, '\n')
+  print('\nDiscriminator variables:', gan.discriminator_vars, '\n')
 
   max_train_op = tf.train.AdamOptimizer(epsilon=1e-3).minimize(
       -loss.value, var_list=gan.discriminator_vars)
@@ -105,14 +101,15 @@ def main(batch_size=128, n_epoches=10, n_iters=int(1e+5)):
       source_url='http://yann.lecun.com/exdb/mnist/')
 
   def get_feed_dict():
-    X_batch, _ = mnist.train.next_batch(batch_size)
-    X_batch = np.where(X_batch > 0.5,
-                       np.ones_like(X_batch),
-                       np.zeros_like(X_batch))
-    yield {data: X_batch}
+    while True:
+      X_batch, _ = mnist.train.next_batch(batch_size)
+      X_batch = np.where(X_batch > 0.5,
+                         np.ones_like(X_batch),
+                         np.zeros_like(X_batch))
+      yield {data: X_batch}
 
   def get_train_op():
-    train_op = max_train_op
+    train_op = min_train_op
     step = 0
     n_iters_per_epoch = int(n_iters / n_epoches)
     while True:
@@ -129,10 +126,12 @@ def main(batch_size=128, n_epoches=10, n_iters=int(1e+5)):
     train_op = get_train_op()
     feed_dict = get_feed_dict()
     pbar = trange(n_iters)
-    for step in pbar:
-      _, loss_val = sess.run([next(train_op), loss.value],
-                             feed_dict=next(feed_dict))
-      pbar.set_description('Loss {0:.2f}'.format(loss_val))
+    for _ in pbar:
+      _, loss_val, loss_err = sess.run(
+          [next(train_op), loss.value, loss.error],
+          feed_dict=next(feed_dict))
+      pbar.set_description('Loss {0:.2f} ({1:.2f})'
+                           .format(loss_val, loss_err))
 
     save_variables(sess, ALL_VARS, CKPT_DIR)
 
