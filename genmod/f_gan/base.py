@@ -12,6 +12,18 @@ from tfutils.graph import get_dependent_variables
 class BaseFGAN(abc.ABC):
   """The abstract base class of f-GAN.
 
+  ```math:
+  1. $D$ the dataset;
+  2. $Z \in \mathcal{Z}$ the latent random variable, obeys prior $P(Z)$;
+  3. $g: \mathcal{Z} \mapsto \mathcal{X}$ the generator-function;
+  4. $X \in \mathcal{X}$ the ambient random variable, by $X = g(Z)$;
+  5. $d: \mathcal{X} \mapsto \mathbb{R}$ the discriminator-function.
+  ```
+
+  Notations:
+    A: Event-shape of the ambient.
+    L: Event-shape of the latent.
+
   Args:
     name: String.
   """
@@ -33,24 +45,24 @@ class BaseFGAN(abc.ABC):
   @property
   @abc.abstractmethod
   def prior(self):
-    """The prior of the latent.
+    """The prior distribution of the latent.
 
     Returns:
-      Distribution.
+      Distribution with event-shape `L`.
     """
     pass
 
   @abc.abstractmethod
   def generator(self, latent, reuse):
-    """Returns the distribution P(X|Z). where X the ambient and Z the latent.
+    """The function `g` that gives X = g(Z), where X the ambient and Z
+    the latent.
 
     Args:
-      latent: Tensor with a 1D batch-shape.
+      latent: Tensor with shape `[B] + L`, for arbitrary positive integer `B`.
       reuse: Boolean.
 
     Returns:
-      Distribution with the same batch-shape as the `latent`, and the same
-      event-shape as the data to be generated.
+      Tensor with shape `[B] + A`.
     """
     pass
 
@@ -58,9 +70,8 @@ class BaseFGAN(abc.ABC):
   def discriminator(self, ambient, reuse):
     """
     Args:
-      ambient: Tensor with shape `[B1] + E`, for arbitrary positive
-        integer `B1`, and `E` the event-shape of the data to be generated,
-        and with dtype the same as the data to be generated.
+      ambient: Tensor with shape `[B] + A`, for arbitrary positive integer
+        `B`.
       reuse: Boolean.
 
     Returns:
@@ -75,13 +86,13 @@ class BaseFGAN(abc.ABC):
       reuse: Boolean.
 
     Returns:
-      Tensor with shape `[n_samples] + E`, where `E` the event-shape of the
-      data to be generated.
+      Tensor with shape `[n_samples] + A`.
     """
     with tf.name_scope('generator'):
-      latent_samples = self.prior.sample(n_samples)  # [n_samples] + L
-      generator_dist = self.generator(latent_samples, reuse=reuse)
-      ambient_samples = generator_dist.sample()  # [n_samples] + E
+      # [n_samples] + L
+      latent_samples = self.prior.sample(n_samples)
+      # [n_samples] + E
+      ambient_samples = self.generator(latent_samples, reuse=reuse)
 
       # The `tf.Variable`s that the generator depends on,
       # for the property `self.generator_vars`
@@ -89,7 +100,7 @@ class BaseFGAN(abc.ABC):
 
       return ambient_samples
 
-  def loss(self, data):
+  def loss(self, data, reuse=tf.AUTO_REUSE):
     """
     Args:
       data: Tensor.
@@ -99,7 +110,7 @@ class BaseFGAN(abc.ABC):
     """
     with tf.name_scope(self.name):
       loss_mc_int = self.f_divergance(
-          data, self._generator, self.discriminator)
+          data, self._generator, self.discriminator, reuse)
 
       # The `tf.Variable`s that the generator depends on,
       # for the property `self.generator_vars`
