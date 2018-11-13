@@ -19,7 +19,7 @@ class KLDivergence(BaseFDivergence):
     \end{equation}
     ```
     """
-    return -1.0 * tf.nn.softplus(-1.0 * x)
+    return -tf.nn.softplus(-x)
 
   def f_star(self, x):
     r"""Returns a positive tensor.
@@ -30,7 +30,7 @@ class KLDivergence(BaseFDivergence):
     \end{equation}
     ```
     """
-    return -1.0 * tf.log1p(-1.0 * tf.exp(x))
+    return -tf.log1p(-tf.exp(x))
 
 
 class BaseVanillaGAN(BaseFGAN):
