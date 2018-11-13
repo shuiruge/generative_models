@@ -78,7 +78,11 @@ class BaseFDivergence(abc.ABC):
     """
     pass
 
-  def __call__(self, data, generator, discriminator):
+  def __call__(self,
+               data,
+               generator,
+               discriminator,
+               reuse=tf.AUTO_REUSE):
     """
     Args:
       data: Tensor with shape `[B] + E`, for arbitrary positive integer `B` and
@@ -98,6 +102,7 @@ class BaseFDivergence(abc.ABC):
           reuse: Boolean.
         Returns:
           Tensor with shape `[B1]`.
+      reuse: Boolean.
 
     Returns:
       An instance of scalar `MonteCarloIntegral`.
@@ -108,35 +113,33 @@ class BaseFDivergence(abc.ABC):
     with tf.name_scope(self.name):
 
       def _discriminator(ambient):
-        return discriminator(ambient, reuse=tf.AUTO_REUSE)
+        return discriminator(ambient, reuse=reuse)
 
       def _generator(n_samples):
-        return generator(n_samples, reuse=tf.AUTO_REUSE)
-
-      # Initialize
-      mc_int = MonteCarloIntegral(value=tf.zeros([]), error=tf.zeros([]))
+        return generator(n_samples, reuse=reuse)
 
       # E_{x~P} [ g(D(x)) ]
       mc_integrand = self.output_activation(_discriminator(data))  # [B]
       mean, var = tf.nn.moments(mc_integrand, axes=[0])  # []
-      mc_int.value += mean
+      mc_integral_val = mean
       batch_size, *rests = data.get_shape().as_list()
-      mc_int.error += tf.sqrt(var / tf.cast(batch_size, dtype=var.dtype))
+      mc_integral_err = tf.sqrt(var / tf.cast(batch_size, dtype=var.dtype))
 
       # x ~ Q
       ambient_samples = _generator(self.n_samples)  # [self.n_samples] + E
-      ambient_samples = tf.cast(ambient_samples, data.dtype)
       self.check_same_event_shape(data, ambient_samples)
 
       # E_{x~Q} [ -f*( g(D(x)) ) ]
-      mc_integrand = -1.0 * self.f_star(
+      mc_integrand = - self.f_star(
           self.output_activation(
               _discriminator(ambient_samples)))  # [self.n_samples]
       mean, var = tf.nn.moments(mc_integrand, axes=[0])  # []
-      mc_int.value += mean
-      mc_int.error += tf.sqrt(var / tf.cast(self.n_samples, dtype=var.dtype))
+      mc_integral_val += mean
+      n_samples = tf.cast(self.n_samples, dtype=var.dtype)
+      mc_integral_err += tf.sqrt(var / n_samples)
 
-      return mc_int
+      return MonteCarloIntegral(value=mc_integral_val,
+                                error=mc_integral_err)
 
   def check_same_event_shape(self, data, ambient_samples):
     """
