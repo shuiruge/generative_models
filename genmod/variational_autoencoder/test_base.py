@@ -24,7 +24,6 @@ import os
 from tqdm import trange
 import numpy as np
 import tensorflow as tf
-from tensorflow.examples.tutorials.mnist import input_data
 try:
   import tensorflow_probability as tfp  # pylint: disable=E0401
   tfd = tfp.distributions
@@ -35,6 +34,7 @@ except ModuleNotFoundError:
 from tfutils.train import (save_variables, restore_variables, ALL_VARS,
                            create_frugal_session)
 from genmod.variational_autoencoder.base import BaseVariationalAutoencoder
+from genmod.utils.mnist.data import get_dataset
 
 
 # For reproducibility
@@ -46,6 +46,7 @@ tf.set_random_seed(SEED)
 SCRIPT_PATH = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(SCRIPT_PATH, '../../dat/')
 CKPT_DIR = os.path.join(DATA_DIR, 'checkpoints/vae')
+MNIST = get_dataset(os.path.join(DATA_DIR, 'MNIST'))
 
 
 def get_p_X_z(z, X_dim, hidden_layers=None,
@@ -209,11 +210,6 @@ def main(n_iters, batch_size=128, z_dim=16, use_bijectors=True):
   sess = create_frugal_session()
   sess.run(tf.global_variables_initializer())
 
-  mnist = input_data.read_data_sets(
-      os.path.join(DATA_DIR, 'MNIST'),
-      one_hot=True,
-      source_url='http://yann.lecun.com/exdb/mnist/')
-
   try:
     restore_variables(sess, ALL_VARS, CKPT_DIR)
 
@@ -223,7 +219,7 @@ def main(n_iters, batch_size=128, z_dim=16, use_bijectors=True):
     pbar = trange(n_iters)
     for step in pbar:
         n_sample_val = 1 if step < (n_iters // 2) else 128
-        X_batch, _ = mnist.train.next_batch(batch_size)
+        X_batch, _ = MNIST.train.next_batch(batch_size)
         feed_dict = {X: process_X(X_batch), n_samples: n_sample_val}
         _, loss_val = sess.run([train_op, loss_X_scalar], feed_dict)
         pbar.set_description('loss: {0:.2f}'.format(loss_val))
@@ -232,7 +228,7 @@ def main(n_iters, batch_size=128, z_dim=16, use_bijectors=True):
 
   # --- Evaluation ---
 
-  X_batch, _ = mnist.test.next_batch(batch_size)
+  X_batch, _ = MNIST.test.next_batch(batch_size)
   feed_dict = {X: process_X(X_batch), n_samples: 128}
   loss_vals = sess.run(loss_X_mcint.value, feed_dict)
   loss_error_vals = sess.run(loss_X_mcint.error, feed_dict)
@@ -242,7 +238,7 @@ def main(n_iters, batch_size=128, z_dim=16, use_bijectors=True):
     print('loss: {0:.2f} ({1:.2f})'.format(loss_val, loss_error_val))
 
   # Noised data
-  X_batch, _ = mnist.test.next_batch(batch_size)
+  X_batch, _ = MNIST.test.next_batch(batch_size)
   X_batch = add_noise(X_batch, noise_ratio=0.8)
   feed_dict = {X: process_X(X_batch), n_samples: 128}
   loss_vals = sess.run(loss_X_mcint.value, feed_dict)

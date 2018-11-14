@@ -3,7 +3,6 @@ from tqdm import trange
 from collections import namedtuple
 import numpy as np
 import tensorflow as tf
-from tensorflow.examples.tutorials.mnist import input_data
 try:
   import tensorflow_probability as tfp
   tfd = tfp.distributions
@@ -14,6 +13,7 @@ except ModuleNotFoundError:
 from tfutils.train import (save_variables, restore_variables, ALL_VARS,
                            create_frugal_session)
 from genmod.vanilla_gan import BaseVanillaGAN
+from genmod.utils.mnist.data import get_dataset
 
 
 # Turn off TF warnings
@@ -28,11 +28,7 @@ tf.set_random_seed(SEED)
 SCRIPT_PATH = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(SCRIPT_PATH, '../../dat/')
 CKPT_DIR = os.path.join(DATA_DIR, 'checkpoints/vanilla_gen')
-
-MNIST = input_data.read_data_sets(
-    os.path.join(DATA_DIR, 'MNIST'),
-    one_hot=True,
-    source_url='http://yann.lecun.com/exdb/mnist/')
+MNIST = get_dataset(os.path.join(DATA_DIR, 'MNIST'))
 
 
 class VanillaGan(BaseVanillaGAN):
@@ -141,7 +137,11 @@ def train(sess, ops, train_op_gen, feed_dict_gen, n_iters):
 
 
 def evaluate(sess, ops, gan):
-  pass  # TODO
+  bernoulli_prob = gan._generator(n_samples=100, reuse=tf.AUTO_REUSE)
+  bernoulli_dist = tfd.Bernoulli(probs=bernoulli_prob)
+  sample = bernoulli_dist.sample()
+  sample_vals = sess.run(sample)
+  return sample_vals
 
 
 def main(batch_size=128, n_epoches=100, n_iters=int(1e+4)):
