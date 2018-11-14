@@ -14,6 +14,7 @@ from tfutils.train import (save_variables, restore_variables, ALL_VARS,
                            create_frugal_session)
 from genmod.vanilla_gan import BaseVanillaGAN
 from genmod.utils.mnist.data import get_dataset
+from genmod.utils.mnist.plot import get_image
 
 
 # Turn off TF warnings
@@ -104,11 +105,11 @@ def get_feed_dict(ops, batch_size):
     yield {ops.data: X_batch}
 
 
-def get_train_op(ops, n_iters_per_epoch):
-  train_op = ops.min_train_op  # initialize.
+def get_train_op(ops, switch_step):
+  train_op = ops.max_train_op  # initialize.
   step = 0
   while True:
-    if (step + 1) % n_iters_per_epoch == 0:  # switch train-op
+    if (step + 1) % switch_step == 0:  # switch train-op
       if train_op == ops.max_train_op:
         train_op = ops.min_train_op
       else:
@@ -136,24 +137,29 @@ def train(sess, ops, train_op_gen, feed_dict_gen, n_iters):
     save_variables(sess, ALL_VARS, CKPT_DIR)
 
 
-def evaluate(sess, ops, gan):
-  bernoulli_prob = gan._generator(n_samples=100, reuse=tf.AUTO_REUSE)
+def evaluate(sess, ops, gan, n_samples):
+  bernoulli_prob = gan._generator(n_samples=n_samples,
+                                  reuse=tf.AUTO_REUSE)
   bernoulli_dist = tfd.Bernoulli(probs=bernoulli_prob)
   sample = bernoulli_dist.sample()
   sample_vals = sess.run(sample)
-  return sample_vals
+  for sample_val in sample_vals:
+    image = get_image(sample_val)
+    image.show()
 
 
-def main(batch_size=128, n_epoches=100, n_iters=int(1e+4)):
+def main(batch_size=128,
+         switch_step=1,
+         n_iters=int(1e+4),
+         n_samples_to_show=10):
   gan, ops = get_gan_and_ops(batch_size)
   sess = create_frugal_session()
 
-  n_iters_per_epoch = int(n_iters / n_epoches)
-  train_op_gen = get_train_op(ops, n_iters_per_epoch)
+  train_op_gen = get_train_op(ops, switch_step)
   feed_dict_gen = get_feed_dict(ops, batch_size)
   train(sess, ops, train_op_gen, feed_dict_gen, n_iters)
 
-  evaluate(sess, ops, gan)
+  evaluate(sess, ops, gan, n_samples_to_show)
 
 
 if __name__ == '__main__':
