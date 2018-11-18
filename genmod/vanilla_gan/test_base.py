@@ -12,7 +12,7 @@ except ModuleNotFoundError:
   tfb = tfd.bijectors
 from tfutils.train import (save_variables, restore_variables, ALL_VARS,
                            create_frugal_session)
-from genmod.vanilla_gan import BaseVanillaGAN
+from genmod.vanilla_gan.base import BaseVanillaGAN
 from genmod.utils.mnist.data import get_dataset
 from genmod.utils.mnist.plot import get_image
 
@@ -33,12 +33,15 @@ MNIST = get_dataset(os.path.join(DATA_DIR, 'MNIST'))
 
 
 class VanillaGan(BaseVanillaGAN):
+  """Implements the BaseVanillaGAN by MLP.
 
+  Comparing with: https://github.com/aymericdamien/TensorFlow-Examples/blob/master/examples/3_NeuralNetworks/gan.py  # noqa: E501
+  """
   def __init__(self,
                ambient_dim,
                latent_dim,
-               discr_layers=(128, 128),
-               gen_layers=(128, 128),
+               discr_layers=(256,),
+               gen_layers=(256,),
                *args, **kwargs):
     super().__init__(*args, **kwargs)
     self.ambient_dim = ambient_dim
@@ -58,6 +61,8 @@ class VanillaGan(BaseVanillaGAN):
       for i, layer in enumerate(self.gen_layers):
         hidden = tf.layers.dense(hidden, layer, activation=tf.nn.relu,
                                  name='hidden_layer_{}'.format(i))
+        # hidden = tf.layers.dropout(hidden, rate=0.5,
+        #                            name='dropout_{}'.format(i))
       logits = tf.layers.dense(hidden, self.ambient_dim, activation=None,
                                name='logits')
       return tf.sigmoid(logits)
@@ -68,56 +73,47 @@ class VanillaGan(BaseVanillaGAN):
       for i, layer in enumerate(self.discr_layers):
         hidden = tf.layers.dense(hidden, layer, activation=tf.nn.relu,
                                  name='hidden_layer_{}'.format(i))
+        # hidden = tf.layers.dropout(hidden, rate=0.5,
+        #                            name='dropout_{}'.format(i))
       output = tf.layers.dense(hidden, 1, activation=None,
                                name='output_layer')
       output = tf.squeeze(output, axis=-1)
       return output
 
 
-Ops = namedtuple('Ops', 'data, loss, max_train_op, min_train_op')
+Ops = namedtuple('Ops', 'data, gan_loss, discr_train_op, gen_train_op')
 
 
-def get_gan_and_ops(batch_size):
+def get_gan_and_ops(batch_size, latent_dim):
   ambient_dim = 28 * 28  # for MNIST dataset.
   data = tf.placeholder(shape=[batch_size, ambient_dim],
                         dtype='float32', name='data')
 
-  gan = VanillaGan(ambient_dim, latent_dim=8)
-  loss = gan.loss(data)
+  gan = VanillaGan(ambient_dim, latent_dim)
+  gan_loss = gan.loss(data)
 
   print('\nGenerator variables:', gan.generator_vars, '\n')
   print('\nDiscriminator variables:', gan.discriminator_vars, '\n')
 
-  max_train_op = tf.train.AdamOptimizer(epsilon=1e-3).minimize(
-      -loss.value, var_list=gan.discriminator_vars)
-  min_train_op = tf.train.AdamOptimizer(epsilon=1e-3).minimize(
-      loss.value, var_list=gan.generator_vars)
-
-  return gan, Ops(data, loss, max_train_op, min_train_op)
+  discr_train_op = (tf.train.AdamOptimizer(learning_rate=2e-4)
+                    .minimize(gan_loss.discriminator.value,
+                              var_list=gan.discriminator_vars))
+  gen_train_op = (tf.train.AdamOptimizer(learning_rate=2e-4)
+                  .minimize(gan_loss.generator.value,
+                            var_list=gan.generator_vars))
+  return gan, Ops(data, gan_loss, discr_train_op, gen_train_op)
 
 
 def get_feed_dict(ops, batch_size):
   while True:
     X_batch, _ = MNIST.train.next_batch(batch_size)
-    X_batch = np.where(X_batch > 0.5,
-                       np.ones_like(X_batch),
-                       np.zeros_like(X_batch))
+    # X_batch = np.where(X_batch > 0.5,
+    #                    np.ones_like(X_batch),
+    #                    np.zeros_like(X_batch))
     yield {ops.data: X_batch}
 
 
-def get_train_op(ops, switch_step):
-  train_op = ops.max_train_op  # initialize.
-  step = 0
-  while True:
-    if (step + 1) % switch_step == 0:  # switch train-op
-      if train_op == ops.max_train_op:
-        train_op = ops.min_train_op
-      else:
-        train_op = ops.max_train_op
-    yield train_op
-
-
-def train(sess, ops, train_op_gen, feed_dict_gen, n_iters):
+def train(sess, ops, feed_dict_gen, n_iters):
   sess.run(tf.global_variables_initializer())
 
   try:
@@ -127,14 +123,22 @@ def train(sess, ops, train_op_gen, feed_dict_gen, n_iters):
     print(e)
 
     pbar = trange(n_iters)
-    for _ in pbar:
-      _, loss_val, loss_err = sess.run(
-          [next(train_op_gen), ops.loss.value, ops.loss.error],
-          feed_dict=next(feed_dict_gen))
-      pbar.set_description('Loss {0:.2f} ({1:.2f})'
-                           .format(loss_val, loss_err))
+    for step in pbar:
+      ops_to_run = [ops.discr_train_op,
+                    ops.gen_train_op,
+                    ops.gan_loss.generator.value,
+                    ops.gan_loss.generator.error,
+                    ops.gan_loss.discriminator.value,
+                    ops.gan_loss.discriminator.error]
+      run_result = sess.run(ops_to_run, feed_dict=next(feed_dict_gen))
+      _, _, gloss_val, gloss_err, dloss_val, dloss_err = run_result
+      pbar.set_description(
+          'G-Loss {0:.2f} ({1:.2f}) - D-Loss {2:.2f} ({3:.2f})'
+          .format(gloss_val, gloss_err, dloss_val, dloss_err))
+      if np.isnan(gloss_val) or np.isnan(dloss_val):
+        break
 
-    save_variables(sess, ALL_VARS, CKPT_DIR)
+    # save_variables(sess, ALL_VARS, CKPT_DIR)
 
 
 def evaluate(sess, ops, gan, n_samples):
@@ -148,20 +152,22 @@ def evaluate(sess, ops, gan, n_samples):
     image.show()
 
 
-def main(batch_size=128,
-         switch_step=1,
-         n_iters=int(1e+4),
-         n_samples_to_show=10):
-  gan, ops = get_gan_and_ops(batch_size)
+def main(batch_size,
+         latent_dim,
+         n_iters,
+         n_samples_to_show):
+  gan, ops = get_gan_and_ops(batch_size, latent_dim)
   sess = create_frugal_session()
 
-  train_op_gen = get_train_op(ops, switch_step)
   feed_dict_gen = get_feed_dict(ops, batch_size)
-  train(sess, ops, train_op_gen, feed_dict_gen, n_iters)
+  train(sess, ops, feed_dict_gen, n_iters)
 
   evaluate(sess, ops, gan, n_samples_to_show)
 
 
 if __name__ == '__main__':
 
-  main()
+  main(batch_size=128,
+       latent_dim=100,
+       n_iters=100000,
+       n_samples_to_show=10)
