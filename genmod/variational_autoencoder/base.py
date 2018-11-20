@@ -15,7 +15,7 @@ itself an evaluation to the performance of the fitting.
 
 import abc
 import tensorflow as tf
-from tfutils.monte_carlo_integral import MonteCarloIntegral
+from tfutils.monte_carlo_integral import monte_carlo_integrate
 try:
   import tensorflow_probability as tfp
   tfd = tfp.distributions
@@ -137,14 +137,7 @@ class BaseVariationalAutoencoder(abc.ABC):
 
         # Get the log_q(z|x) - log_p(z) - log_p(x|z) in definition
         # [n_samples] + B
-        mc_samples = (encoder.log_prob(latent_samples) -
+        integrands = (encoder.log_prob(latent_samples) -
                       self.prior.log_prob(latent_samples) -
                       decoder.log_prob(ambient))
-
-        # Get the Monte-Carlo integral in definition
-        mean, variance = tf.nn.moments(mc_samples, axes=[0])
-        loss_tensor = mean
-        n_samples_float = tf.cast(self.n_samples, variance.dtype)
-        loss_error_tensor = tf.sqrt(variance / n_samples_float)
-
-        return MonteCarloIntegral(loss_tensor, loss_error_tensor)
+        return monte_carlo_integrate(integrands, axes=[0])
