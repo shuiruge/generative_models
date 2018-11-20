@@ -37,7 +37,7 @@ class BaseFGAN(abc.ABC):
 
   @property
   @abc.abstractmethod
-  def f_divergance(self):
+  def f_divergence(self):
     """Returns an instance of f-divergene that inherits the abstract base class
     `BaseFDivergence`."""
     pass
@@ -109,8 +109,8 @@ class BaseFGAN(abc.ABC):
       An instance of scalar `MonteCarloIntegral`.
     """
     with tf.name_scope(self.name):
-      loss_mc_int = self.f_divergance(
-          data, self._generator, self.discriminator, reuse)
+      loss_mc_int = self.f_divergence(
+          data, self.discriminator, self._generator, reuse)
 
       # The `tf.Variable`s that the generator depends on,
       # for the property `self.generator_vars`
