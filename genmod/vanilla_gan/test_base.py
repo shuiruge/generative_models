@@ -12,7 +12,7 @@ except ModuleNotFoundError:
   tfb = tfd.bijectors
 from tfutils.train import (save_variables, restore_variables, ALL_VARS,
                            create_frugal_session)
-from genmod.vanilla_gan.base import BaseVanillaGAN
+from genmod.vanilla_gan_2.base import BaseVanillaGAN
 from genmod.utils.mnist.data import get_dataset
 from genmod.utils.mnist.plot import get_image
 
@@ -96,10 +96,10 @@ def get_gan_and_ops(batch_size, latent_dim):
   print('\nDiscriminator variables:', gan.discriminator_vars, '\n')
 
   discr_train_op = (tf.train.AdamOptimizer(learning_rate=2e-4)
-                    .minimize(gan_loss.discriminator.value,
+                    .minimize(-gan_loss.value,
                               var_list=gan.discriminator_vars))
   gen_train_op = (tf.train.AdamOptimizer(learning_rate=2e-4)
-                  .minimize(gan_loss.generator.value,
+                  .minimize(gan_loss.value,
                             var_list=gan.generator_vars))
   return gan, Ops(data, gan_loss, discr_train_op, gen_train_op)
 
@@ -113,7 +113,7 @@ def get_feed_dict(ops, batch_size):
     yield {ops.data: X_batch}
 
 
-def train(sess, ops, feed_dict_gen, n_iters):
+def train(sess, gan, ops, feed_dict_gen, n_iters):
   sess.run(tf.global_variables_initializer())
 
   try:
@@ -126,16 +126,19 @@ def train(sess, ops, feed_dict_gen, n_iters):
     for step in pbar:
       ops_to_run = [ops.discr_train_op,
                     ops.gen_train_op,
-                    ops.gan_loss.generator.value,
-                    ops.gan_loss.generator.error,
-                    ops.gan_loss.discriminator.value,
-                    ops.gan_loss.discriminator.error]
+                    ops.gan_loss.value,
+                    ops.gan_loss.error,
+                    gan.f_divergence._peep['discriminate_part'].value,
+                    gan.f_divergence._peep['discriminate_part'].error,
+                    gan.f_divergence._peep['generate_part'].value,
+                    gan.f_divergence._peep['generate_part'].error]
       run_result = sess.run(ops_to_run, feed_dict=next(feed_dict_gen))
-      _, _, gloss_val, gloss_err, dloss_val, dloss_err = run_result
+      _, _, loss_val, loss_err, dp_val, dp_err, gp_val, gp_err = run_result
       pbar.set_description(
-          'G-Loss {0:.2f} ({1:.2f}) - D-Loss {2:.2f} ({3:.2f})'
-          .format(gloss_val, gloss_err, dloss_val, dloss_err))
-      if np.isnan(gloss_val) or np.isnan(dloss_val):
+          'Loss {0:.2f} ({1:.2f}) - DP {2:.2f} ({3:.2f}) - '
+          'GP {4:.2f} ({5:.2f})'.format(
+              loss_val, loss_err, dp_val, dp_err, gp_val, gp_err))
+      if np.isnan(loss_val):
         break
 
     # save_variables(sess, ALL_VARS, CKPT_DIR)
@@ -160,7 +163,7 @@ def main(batch_size,
   sess = create_frugal_session()
 
   feed_dict_gen = get_feed_dict(ops, batch_size)
-  train(sess, ops, feed_dict_gen, n_iters)
+  train(sess, gan, ops, feed_dict_gen, n_iters)
 
   evaluate(sess, ops, gan, n_samples_to_show)
 
