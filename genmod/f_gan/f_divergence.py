@@ -7,7 +7,7 @@ Implements the abstract base class of f-divergence.
 
 import abc
 import tensorflow as tf
-from tfutils.monte_carlo_integral import MonteCarloIntegral
+from tfutils.monte_carlo_integral import monte_carlo_integrate
 
 
 class BaseFDivergence(abc.ABC):
@@ -15,17 +15,29 @@ class BaseFDivergence(abc.ABC):
 
   Definition:
     ```math
-    Let $f$ a convex function on $\mathbb{R}$, with domain $\textrm{dom}_f$
-    in \mathbb{R}$. Let $g$ a function $\mathbb{R} \mapsto \textrm{dom}_f$,
-    called {\it output activation function}. Let $P$ the empirical distribution
-    of the data and $Q$ the distribution fitting to $P$, by minimizing the
-    {\it f-divergence} defined as
+    Denotes:
+      $f^{\*}$: Convex function on $\mathbb{R}$, with domain
+        $\textrm{dom}_{f^{\*}$;
+      $g_f$: Function $\mathbb{R} \mapsto \textrm{dom}_{f^{\*}}$, called
+        "output activation function";
+      $P$: The empirical distribution of the data;
+      $Q$: The distribution fitting to $P$, by minimizing the f-divergence
+
+    F-divergence $D_f \left( P \| Q \right)$ is defined as
 
     \begin{equation}
-        D_f := \mathbb{E}_{x \sim P} \left[ g(D(x)) \right] +
-               \mathbb{E}_{x \sim Q} \left[ f^{\*}( g(D(x)) ) \right].
+
+      D_f := \mathbb{E}_{x \sim P} \left[ g_f(D(x)) \right] +
+             \mathbb{E}_{x \sim Q} \left[ f^{\*}( g_f(D(x)) ) \right],
+
     \end{equation}
+
+    where the first line is called "discriminator part" and the second line
+    "generator part".
     ```
+
+  Notations:
+    A: The event-shape of the ambient.
 
   References:
     1. [Nowozin, et al. (2016)](https://arxiv.org/abs/1606.00709).
@@ -41,16 +53,19 @@ class BaseFDivergence(abc.ABC):
     self.n_samples = n_samples
     self.name = name
 
+    # For peering
+    self._peep = {}
+
   @abc.abstractmethod
   def output_activation(self, x):
     r"""The output activation function
 
     ```math
-    g : \mathbb{R} \mapsto \textrm{dom}_{f^{\*}}
+    g_f: \mathbb{R} \mapsto \textrm{dom}_{f^{\*}}
     ```
 
     Args:
-      x: Tensor with shape `[?]`.
+      x: Tensor with shape `[None]`.
 
     Returns:
       Tensor with the same shape as `x`.
@@ -71,75 +86,99 @@ class BaseFDivergence(abc.ABC):
       ```
 
     Args:
-      x: Tensor with shape `[?]`.
+      x: Tensor with shape `[None]`.
 
     Returns:
       Tensor with the same shape as `x`.
     """
     pass
 
+  def discriminate_part(self, data, discriminator, reuse):
+    """Returns the `E_{x~P} [ g_f(D(x)) ]`.
+
+    Args:
+      data: Tensor with shape `[None] + A`.
+      discriminator: Callable with the signature:
+        Args:
+          ambient: Tensor with shape `[None] + A`.
+          reuse: Boolean.
+        Returns:
+          Tensor with the same batch-shape as the `ambient`.
+      reuse: Boolean.
+
+    Returns:
+      A scalar `MonteCarloIntegral` instance.
+    """
+    with tf.name_scope('discriminator_part'):
+      # [B]
+      integrands = self.output_activation(
+          discriminator(data, reuse))
+      return monte_carlo_integrate(integrands, axes=[0])
+
+  def generate_part(self, fake_data, discriminator, reuse):
+    """Returns the `E_{x~Q} [ -f*( g_f(D(x)) ) ]`.
+
+    Args:
+      fake_data: Tensor with shape `[None] + A`.
+      discriminator: Callable with the signature:
+        Args:
+          ambient: Tensor with shape `[None] + A`.
+          reuse: Boolean.
+        Returns:
+          Tensor with the same batch-shape as the `ambient`.
+      reuse: Boolean.
+
+    Returns:
+      A scalar `MonteCarloIntegral` instance.
+    """
+    with tf.name_scope('generator_part'):
+      # [self.n_samples]
+      integrands = - self.f_star(
+          self.output_activation(
+              discriminator(fake_data, reuse)))
+      return monte_carlo_integrate(integrands, axes=[0])
+
   def __call__(self,
                data,
-               generator,
                discriminator,
+               generator,
                reuse=tf.AUTO_REUSE):
     """
     Args:
-      data: Tensor with shape `[B] + E`, for arbitrary positive integer `B` and
-        tuple of positive integers `E`. The data shall be unbiased and the `B`
-        shall be greater than 30, as a thumb-rule for central limit theorem,
-        employed by the Monte-Carlo integral (i.e. the E_{x~P}[...]).
+      data: Tensor with shape `[None] + A`.
+      discriminator: Callable with the signature:
+        Args:
+          ambient: Tensor with shape `[None] + A`.
+          reuse: Boolean.
+        Returns:
+          Tensor with the same batch-shape as the `ambient`.
       generator: Callable with signature:
         Args:
           n_samples: Positive integer.
           reuse: Boolean.
         Returns:
-          Tensor with shape `[n_samples] + E`.
-      discriminator: Callable with the signature:
-        Args:
-          ambient: Tensor with shape `[B1] + E`, for arbitrary positive
-            integer `B1`, and with dtype the same as `data`.
-          reuse: Boolean.
-        Returns:
-          Tensor with shape `[B1]`.
+          Tensor with shape `[n_samples] + A`.
       reuse: Boolean.
 
     Returns:
-      An instance of scalar `MonteCarloIntegral`.
+      A scalar `MonteCarloIntegral` instance.
 
     Raises:
       EventShapeError.
     """
     with tf.name_scope(self.name):
+      # [self.n_samples] + E
+      fake_data = generator(self.n_samples, reuse)
+      self.check_same_event_shape(data, fake_data)
 
-      def _discriminator(ambient):
-        return discriminator(ambient, reuse=reuse)
+      discr_part = self.discriminate_part(data, discriminator, reuse)
+      gen_part = self.generate_part(fake_data, discriminator, reuse)
 
-      def _generator(n_samples):
-        return generator(n_samples, reuse=reuse)
+      # Store as extra information
+      self._peep['discriminate_part'] = discr_part
+      self._peep['generate_part'] = gen_part
 
-      # E_{x~P} [ g(D(x)) ]
-      mc_integrand = self.output_activation(_discriminator(data))  # [B]
-      mean, var = tf.nn.moments(mc_integrand, axes=[0])  # []
-      mc_integral_val = mean
-      batch_size, *rests = data.get_shape().as_list()
-      mc_integral_err = tf.sqrt(var / tf.cast(batch_size, dtype=var.dtype))
-
-      # x ~ Q
-      ambient_samples = _generator(self.n_samples)  # [self.n_samples] + E
-      self.check_same_event_shape(data, ambient_samples)
-
-      # E_{x~Q} [ -f*( g(D(x)) ) ]
-      mc_integrand = - self.f_star(
-          self.output_activation(
-              _discriminator(ambient_samples)))  # [self.n_samples]
-      mean, var = tf.nn.moments(mc_integrand, axes=[0])  # []
-      mc_integral_val += mean
-      n_samples = tf.cast(self.n_samples, dtype=var.dtype)
-      mc_integral_err += tf.sqrt(var / n_samples)
-
-      return MonteCarloIntegral(value=mc_integral_val,
-                                error=mc_integral_err)
+      return discr_part + gen_part
 
   def check_same_event_shape(self, data, ambient_samples):
     """
