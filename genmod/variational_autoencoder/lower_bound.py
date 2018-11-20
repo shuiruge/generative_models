@@ -119,10 +119,9 @@ class LossLowerBound:
       lower_bound_tensor = self.log_expectation(decoder_log_probs,
                                                 name='lower_bound')
 
-      # Error of Monte-Carlo integral
+      # Variance of Monte-Carlo integral
       square_delta_lower_bound = -1.0 + tf.exp(self.log_expectation(
           2.0 * (decoder_log_probs - lower_bound_tensor)))
-      delta_lower_bound = tf.sqrt(square_delta_lower_bound,
-                                  name='delta_lower_bound')
 
-      return MonteCarloIntegral(lower_bound_tensor, delta_lower_bound)
+      return MonteCarloIntegral(value=lower_bound_tensor,
+                                variance=square_delta_lower_bound)
