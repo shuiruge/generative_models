@@ -25,7 +25,7 @@ except ImportError:
   tfb = tfd.bijectors
 
 
-class BaseVariationalAutoencoder(abc.ABC):
+class BaseVAE(abc.ABC):
   """The abstract base class of "variational auto-encoder"[1].
 
   Notations:
@@ -52,7 +52,7 @@ class BaseVariationalAutoencoder(abc.ABC):
     """Return the distribution of inference, Q(Z|x) by giving the ambient x.
 
     Args:
-      ambient: Tensor with shape `B + E`.
+      ambient: Tensor with shape `B + A`.
       reuse: Boolean.
 
     Returns:
