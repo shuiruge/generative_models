@@ -1,8 +1,8 @@
 """
 Description
 -----------
-Test the `VariationalAutoencoder` on MNIST dataset. The encoder and decoder
-are both multilayer-perceptrons. Bijectors in the inference are employed.
+Test the `BaseVAE` on MNIST dataset. The encoder and decoder are both
+multilayer-perceptrons. Bijectors in the inference are employed.
 
 Conclusion
 ----------
@@ -33,7 +33,7 @@ except ModuleNotFoundError:
   tfb = tfd.bijectors
 from tfutils.train import (save_variables, restore_variables, ALL_VARS,
                            create_frugal_session)
-from genmod.variational_autoencoder.base import BaseVariationalAutoencoder
+from genmod.vae.base import BaseVAE
 from genmod.utils.mnist.data import get_dataset
 
 
@@ -143,7 +143,7 @@ def get_bijectors(name='bjiectors', reuse=None):
     return bijectors
 
 
-class VariationalAutoencoder(BaseVariationalAutoencoder):
+class VAE(BaseVAE):
 
   def __init__(self, batch_size, X_dim, z_dim, use_bijectors, *args, **kwargs):
     super().__init__(*args, **kwargs)
@@ -196,8 +196,7 @@ def main(n_iters, batch_size=128, z_dim=16, use_bijectors=True):
   X_dim = 28 * 28  # for MNIST dataset.
   X = tf.placeholder(shape=[batch_size, X_dim], dtype='float32', name='X')
   n_samples = tf.placeholder(shape=[], dtype='int32', name='n_samples')
-  vae = VariationalAutoencoder(batch_size, X_dim, z_dim, use_bijectors,
-                               n_samples=n_samples)
+  vae = VAE(batch_size, X_dim, z_dim, use_bijectors, n_samples=n_samples)
 
   loss_X_mcint = vae.loss(X)
   loss_X_scalar = tf.reduce_mean(loss_X_mcint.value)

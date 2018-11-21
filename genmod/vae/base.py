@@ -43,7 +43,7 @@ class BaseVAE(abc.ABC):
   """
   def __init__(self,
                n_samples=32,
-               name='VariationalAutoencoder'):
+               name='VAE'):
     self.n_samples = n_samples
     self.base_name = name
 
@@ -140,4 +140,5 @@ class BaseVAE(abc.ABC):
         integrands = (encoder.log_prob(latent_samples) -
                       self.prior.log_prob(latent_samples) -
                       decoder.log_prob(ambient))
-        return monte_carlo_integrate(integrands, axes=[0])
+        return monte_carlo_integrate(integrands, axes=[0],
+                                     n_samples=self.n_samples)
