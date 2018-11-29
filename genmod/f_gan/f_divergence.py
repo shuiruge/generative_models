@@ -192,7 +192,8 @@ class BaseFDivergence(abc.ABC):
     """
     if get_event_shape(data) != get_event_shape(ambient_samples):
       raise EventShapeError('Data "{0}" and ambient-samples "{1}" should '
-                            'share the same event-shape.')
+                            'share the same event-shape.'
+                            .format(data, ambient_samples))
 
 
 def get_event_shape(x):
