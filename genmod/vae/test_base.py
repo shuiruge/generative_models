@@ -45,86 +45,16 @@ tf.set_random_seed(SEED)
 # For data
 SCRIPT_PATH = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(SCRIPT_PATH, '../../dat/')
-CKPT_DIR = os.path.join(DATA_DIR, 'checkpoints/vae')
-MNIST = get_dataset(os.path.join(DATA_DIR, 'MNIST'))
 
 
-def get_p_X_z(z, X_dim, hidden_layers=None,
-              name='p_X_z', reuse=None):
-  """Returns the distribution of P(X|Z).
-
-  X | Z ~ Bernoulli( p(Z) ).
-
-  Args:
-    z: Tensor of the shape `batch_shape + [z_dim]`.
-    X_dim: Positive integer.
-    hidden_layers: List of positive integers. Defaults to
-      `[128, 256, 512]`.
-
-  Returns:
-    An instance of `tfd.Distribution`, with batch-shape `batch_shape`
-    and event-shape `[X_dim]`.
-  """
-  if hidden_layers is None:
-    hidden_layers = [128, 256, 512]
-
-  with tf.variable_scope(name, reuse=reuse):
-    hidden = z
-    for hidden_layer in hidden_layers:
-      hidden = tf.layers.dense(hidden, hidden_layer,
-                               activation=tf.nn.relu)
-    logits = tf.layers.dense(hidden, X_dim, activation=None)
-
-    p_X_z = tfd.Bernoulli(logits=logits)
-    # Make the event-shape `[X_dim]`,
-    # and leaving all left axes as batch-shape
-    p_X_z = tfd.Independent(p_X_z, reinterpreted_batch_ndims=1)
-    return p_X_z
-
-
-def get_q_z_X(X, z_dim, hidden_layers=None, bijectors=None,
-              name='q_z_X', reuse=None):
-  """Returns the distribution of Z | X.
-
-  Z = bijector(Z_0), and
-  Z_0 | X ~ Normal(mu(X;phi), sigma(X;phi)).
-
-  Args:
-    X: Tensor with shape `batch_shape + [X_dim]`.
-    z_dim: Positive integer.
-    hidden_layers: List of positive integers. Defaults to
-      `[512, 256, 128]`.
-    bijectors: List of `tfb.Bijector`s. Defaults to an empty
-      list.
-
-  Returns:
-    An instance of `tfd.Distribution`, with batch-shape `batch_shape`
-    and event-shape `[z_dim]`.
-  """
-  if bijectors is None:
-    bijectors = []
-  if hidden_layers is None:
-    hidden_layers = [512, 256, 128]
-
-  with tf.variable_scope(name, reuse=reuse):
-    hidden = X
-    for hidden_layer in hidden_layers:
-      hidden = tf.layers.dense(hidden, hidden_layer,
-                               activation=tf.nn.relu)
-    # Outputs in the fiber-bundle space
-    output = tf.layers.dense(hidden, z_dim * 2, activation=None)
-    # shape: [batch_size, z_dim]
-    mu, log_var = tf.split(output, [z_dim, z_dim], axis=1)
-
-    q_z0_X = tfd.MultivariateNormalDiag(mu, tf.exp(log_var))
-    chain = tfb.Chain(bijectors)
-    q_z_X = tfd.TransformedDistribution(q_z0_X, chain)
-    return q_z_X
-
-
-def get_bijectors(name='bjiectors', reuse=None):
+def get_iafs(layers, name='bjiectors', reuse=None):
   """Complexify the inference distribution by extra-bijectors like
-  normalizing flows.
+  normalizing flows (IAFs herein).
+
+  Args:
+    layers: List of positive integers.
+    name: String.
+    reuse: Boolean.
 
   Returns:
     List of `Bijector`s.
@@ -132,10 +62,10 @@ def get_bijectors(name='bjiectors', reuse=None):
   with tf.variable_scope(name, reuse=reuse):
     bijectors = []
     # return bijectors  # test!
-    for _ in range(10):
+    for layer in layers:
       # Get one bijector
       shift_and_log_scale_fn = \
-          tfb.masked_autoregressive_default_template([128])
+          tfb.masked_autoregressive_default_template([layer])
       # MAP is extremely slow in training. Use IAF instead.
       bijector = tfb.Invert(
           tfb.MaskedAutoregressiveFlow(shift_and_log_scale_fn))
@@ -145,26 +75,63 @@ def get_bijectors(name='bjiectors', reuse=None):
 
 class VAE(BaseVAE):
 
-  def __init__(self, batch_size, X_dim, z_dim, use_bijectors, *args, **kwargs):
-    super().__init__(*args, **kwargs)
+  def __init__(self,
+               ambient_dim,
+               latent_dim,
+               decoder_layers=(128, 256, 512),
+               encoder_layers=(512, 256, 128),
+               bijector_layers=(),
+               **kwargs):
+    super().__init__(**kwargs)
 
-    self.batch_size = batch_size
-    self.X_dim = X_dim
-    self.z_dim = z_dim
-    self.bijectors = get_bijectors() if use_bijectors else []
+    self.ambient_dim = ambient_dim
+    self.latent_dim = latent_dim
+    self.decoder_layers = decoder_layers
+    self.encoder_layers = encoder_layers
+    self.bijector_layers = bijector_layers
 
-  def encoder(self, X, reuse):
-    return get_q_z_X(X, self.z_dim, bijectors=self.bijectors, reuse=reuse)
+    self.bijectors = get_iafs(self.bijector_layers)
 
-  def decoder(self, z, reuse):
-    return get_p_X_z(z, X_dim=self.X_dim, reuse=reuse)
+  def encoder(self, ambient, reuse):
+    with tf.variable_scope('encoder', reuse=reuse):
+      hidden = ambient
+      for hidden_layer in self.encoder_layers:
+        hidden = tf.layers.dense(hidden, hidden_layer,
+                                 activation=tf.nn.relu)
+      # Outputs in the fiber-bundle space
+      output = tf.layers.dense(hidden, self.latent_dim * 2,
+                               activation=None)
+      # shape: [batch_size, z_dim]
+      mu, log_var = tf.split(
+          output, [self.latent_dim, self.latent_dim],
+          axis=1)
+
+      base_dist = tfd.MultivariateNormalDiag(mu, tf.exp(log_var))
+      chain = tfb.Chain(self.bijectors)
+      encoder_dist = tfd.TransformedDistribution(base_dist, chain)
+      return encoder_dist
+
+  def decoder(self, latent, reuse):
+    with tf.variable_scope('decoder', reuse=reuse):
+      hidden = latent
+      for hidden_layer in self.decoder_layers:
+        hidden = tf.layers.dense(hidden, hidden_layer,
+                                 activation=tf.nn.relu)
+      logits = tf.layers.dense(hidden, self.ambient_dim, activation=None)
+
+      decoder_dist = tfd.Bernoulli(logits=logits)
+      # Make the event-shape `[X_dim]`,
+      # and leaving all left axes as batch-shape
+      decoder_dist = tfd.Independent(decoder_dist,
+                                     reinterpreted_batch_ndims=1)
+      return decoder_dist
 
   @property
   def prior(self):
     return tfd.MultivariateNormalDiag(
-        loc=tf.zeros([self.batch_size, self.z_dim]),
-        scale_diag=tf.ones([self.batch_size, self.z_dim]),
-        name='p_z')
+        loc=tf.zeros([self.latent_dim]),
+        scale_diag=tf.ones([self.latent_dim]),
+        name='prior')
 
 
 def process_X(X_batch):
@@ -189,75 +156,103 @@ def add_noise(X_batch, noise_ratio):
   return X_batch
 
 
-def main(n_iters, batch_size=128, z_dim=16, use_bijectors=True):
+class TestVAE(object):
 
-  # --- Build the graph ---
+  def __init__(self,
+               batch_size,
+               vae,
+               batch_generator,
+               optimizer=None):
+    self.batch_size = batch_size
+    self.vae = vae
+    self.batch_generator = batch_generator
 
-  X_dim = 28 * 28  # for MNIST dataset.
-  X = tf.placeholder(shape=[batch_size, X_dim], dtype='float32', name='X')
-  n_samples = tf.placeholder(shape=[], dtype='int32', name='n_samples')
-  vae = VAE(batch_size, X_dim, z_dim, use_bijectors, n_samples=n_samples)
+    if optimizer is None:
+      self.optimizer = tf.train.AdamOptimizer(epsilon=1e-3)
+    else:
+      self.optimizer = optimizer
 
-  loss_X_mcint = vae.loss(X)
-  loss_X_scalar = tf.reduce_mean(loss_X_mcint.value)
+    self.build_graph()
+    self.sess = create_frugal_session()
 
-  optimizer = tf.train.AdamOptimizer(epsilon=1e-3)
-  train_op = optimizer.minimize(loss_X_scalar)
+  def build_graph(self):
+    self.data = tf.placeholder(
+        shape=[self.batch_size, self.vae.ambient_dim],
+        dtype='float32', name='data')
+    self.n_samples = tf.placeholder(shape=[], dtype='int32', name='n_samples')
 
-  # --- Training ---
+    self.loss = self.vae.loss(self.data)
+    self.loss_scalar = tf.reduce_mean(self.loss.value)
 
-  sess = create_frugal_session()
-  sess.run(tf.global_variables_initializer())
+    optimizer = tf.train.AdamOptimizer(epsilon=1e-3)
+    self.train_op = optimizer.minimize(self.loss_scalar)
 
-  try:
-    restore_variables(sess, ALL_VARS, CKPT_DIR)
+  def train(self, n_iters, ckpt_dir):
+    self.sess.run(tf.global_variables_initializer())
 
-  except Exception as e:
-    print(e)
+    if ckpt_dir is not None:
+      try:
+        restore_variables(self.sess, ALL_VARS, ckpt_dir)
+      except Exception as e:
+        print(e)
 
+    self.train_body(n_iters)
+
+    if ckpt_dir is not None:
+      save_variables(self.sess, ALL_VARS, ckpt_dir)
+
+  def train_body(self, n_iters):
     pbar = trange(n_iters)
     for step in pbar:
-        n_sample_val = 1 if step < (n_iters // 2) else 128
-        X_batch, _ = MNIST.train.next_batch(batch_size)
-        feed_dict = {X: process_X(X_batch), n_samples: n_sample_val}
-        _, loss_val = sess.run([train_op, loss_X_scalar], feed_dict)
-        pbar.set_description('loss: {0:.2f}'.format(loss_val))
+      n_sample_val = 1 if step < (n_iters // 2) else 128
+      X_batch = next(self.batch_generator)
+      feed_dict = {self.data: X_batch,
+                   self.n_samples: n_sample_val}
+      _, loss_val = self.sess.run([self.train_op, self.loss_scalar],
+                                  feed_dict)
+      pbar.set_description('loss: {0:.2f}'.format(loss_val))
 
-    save_variables(sess, ALL_VARS, CKPT_DIR)
+  def evaluate(self):
+    X_batch = next(self.batch_generator)
+    self._evaluate(X_batch)
 
-  # --- Evaluation ---
+    # Noised data
+    noised_X_batch = add_noise(X_batch, noise_ratio=0.8)
+    self._evaluate(noised_X_batch)
 
-  X_batch, _ = MNIST.test.next_batch(batch_size)
-  feed_dict = {X: process_X(X_batch), n_samples: 128}
-  loss_vals = sess.run(loss_X_mcint.value, feed_dict)
-  loss_error_vals = sess.run(loss_X_mcint.error, feed_dict)
+    # Fake data
+    fake_X_batch = generate_random_X(batch_size=128)
+    self._evaluate(fake_X_batch)
 
-  for i, loss_val in enumerate(loss_vals):
-    loss_error_val = loss_error_vals[i]
-    print('loss: {0:.2f} ({1:.2f})'.format(loss_val, loss_error_val))
+  def _evaluate(self, data_batch):
+    feed_dict = {self.data: data_batch, self.n_samples: 128}
+    loss_vals = self.sess.run(self.loss.value, feed_dict)
+    loss_error_vals = self.sess.run(self.loss.error, feed_dict)
 
-  # Noised data
-  X_batch, _ = MNIST.test.next_batch(batch_size)
-  X_batch = add_noise(X_batch, noise_ratio=0.8)
-  feed_dict = {X: process_X(X_batch), n_samples: 128}
-  loss_vals = sess.run(loss_X_mcint.value, feed_dict)
-  loss_error_vals = sess.run(loss_X_mcint.error, feed_dict)
+    for i, loss_val in enumerate(loss_vals):
+      loss_error_val = loss_error_vals[i]
+      print('loss: {0:.2f} ({1:.2f})'.format(loss_val, loss_error_val))
 
-  for i, loss_val in enumerate(loss_vals):
-    loss_error_val = loss_error_vals[i]
-    print('noised loss: {0:.2f} ({1:.2f})'.format(loss_val, loss_error_val))
-
-  # Fake data
-  fake_X_batch = generate_random_X(batch_size=128)
-  feed_dict = {X: process_X(fake_X_batch), n_samples: 128}
-  loss_vals = sess.run(loss_X_mcint.value, feed_dict)
-  loss_error_vals = sess.run(loss_X_mcint.error, feed_dict)
-
-  for i, loss_val in enumerate(loss_vals):
-    loss_error_val = loss_error_vals[i]
-    print('fake loss: {0:.2f} ({1:.2f})'.format(loss_val, loss_error_val))
+  def main(self, n_iters, ckpt_dir=None):
+    self.train(n_iters, ckpt_dir)
+    self.evaluate()
 
 
 if __name__ == '__main__':
 
-    main(n_iters=20000)
+  mnist = get_dataset(os.path.join(DATA_DIR, 'MNIST'))
+
+  def get_batch_generator(batch_size):
+    while True:
+      X_batch, _ = mnist.train.next_batch(batch_size)
+      yield process_X(X_batch)
+
+  batch_size = 128
+  batch_generator = get_batch_generator(batch_size)
+
+  vae = VAE(ambient_dim=(28 * 28),
+            latent_dim=64)
+
+  test_vae = TestVAE(batch_size, vae, batch_generator)
+
+  test_vae.main(n_iters=20000)
