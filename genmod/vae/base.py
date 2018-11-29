@@ -79,11 +79,12 @@ class BaseVAE(abc.ABC):
     """Returns the distribution of prior of latent variable, P(Z).
 
     Returns:
-      An instance of `tfd.Distribution`, with shape `B + L`.
+      An instance of `tfd.Distribution`, with batch-shape `()` and
+      event-shape `L`.
     """
     pass
 
-  def loss(self, ambient, name='loss'):
+  def loss(self, ambient, name='loss', reuse=tf.AUTO_REUSE):
     r"""Returns the tensors for L(X) and its error.
 
     Definition:
@@ -121,6 +122,7 @@ class BaseVAE(abc.ABC):
     Args:
       ambient: Tensor of the shape `batch_shape + [ambient_dim]`.
       name: String.
+      reuse: Boolean.
 
     Returns:
       An instance of `MonteCarloIntegral` with shape `batch_shape`.
@@ -128,12 +130,12 @@ class BaseVAE(abc.ABC):
     with tf.name_scope(self.base_name):
       with tf.name_scope(name):
         # Get the distribution Q(Z|x) in definition
-        encoder = self.encoder(ambient, reuse=tf.AUTO_REUSE)
+        encoder = self.encoder(ambient, reuse=reuse)
 
         # Get the distribution P(X|z) in definition
         # [n_samples] + B + L
         latent_samples = encoder.sample(self.n_samples)
-        decoder = self.decoder(latent_samples, reuse=tf.AUTO_REUSE)
+        decoder = self.decoder(latent_samples, reuse=reuse)
 
         # Get the log_q(z|x) - log_p(z) - log_p(x|z) in definition
         # [n_samples] + B
