@@ -1,6 +1,5 @@
 import os
 from tqdm import trange
-from collections import namedtuple
 import numpy as np
 import tensorflow as tf
 try:
@@ -12,7 +11,7 @@ except ModuleNotFoundError:
   tfb = tfd.bijectors
 from tfutils.train import (save_variables, restore_variables, ALL_VARS,
                            create_frugal_session)
-from genmod.vanilla_gan_2.base import BaseVanillaGAN
+from genmod.vanilla_gan.base import BaseVanillaGAN
 from genmod.utils.mnist.data import get_dataset
 from genmod.utils.mnist.plot import get_image
 
@@ -28,7 +27,6 @@ tf.set_random_seed(SEED)
 # For data
 SCRIPT_PATH = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(SCRIPT_PATH, '../../dat/')
-CKPT_DIR = os.path.join(DATA_DIR, 'checkpoints/vanilla_gen')
 MNIST = get_dataset(os.path.join(DATA_DIR, 'MNIST'))
 
 
@@ -41,9 +39,9 @@ class VanillaGan(BaseVanillaGAN):
                ambient_dim,
                latent_dim,
                discr_layers=(256,),
-               gen_layers=(256,),
-               *args, **kwargs):
-    super().__init__(*args, **kwargs)
+               gen_layers=(256, 512),
+               **kwargs):
+    super().__init__(**kwargs)
     self.ambient_dim = ambient_dim
     self.latent_dim = latent_dim
     self.discr_layers = discr_layers
@@ -61,8 +59,6 @@ class VanillaGan(BaseVanillaGAN):
       for i, layer in enumerate(self.gen_layers):
         hidden = tf.layers.dense(hidden, layer, activation=tf.nn.relu,
                                  name='hidden_layer_{}'.format(i))
-        # hidden = tf.layers.dropout(hidden, rate=0.5,
-        #                            name='dropout_{}'.format(i))
       logits = tf.layers.dense(hidden, self.ambient_dim, activation=None,
                                name='logits')
       return tf.sigmoid(logits)
@@ -73,104 +69,99 @@ class VanillaGan(BaseVanillaGAN):
       for i, layer in enumerate(self.discr_layers):
         hidden = tf.layers.dense(hidden, layer, activation=tf.nn.relu,
                                  name='hidden_layer_{}'.format(i))
-        # hidden = tf.layers.dropout(hidden, rate=0.5,
-        #                            name='dropout_{}'.format(i))
       output = tf.layers.dense(hidden, 1, activation=None,
                                name='output_layer')
       output = tf.squeeze(output, axis=-1)
       return output
 
 
-Ops = namedtuple('Ops', 'data, gan_loss, discr_train_op, gen_train_op')
+class TestVanillaGAN(object):
 
+  def __init__(self,
+               batch_size,
+               vanilla_gan,
+               discr_optimizer=None,
+               gen_optimizer=None):
+    self.batch_size = batch_size
+    assert vanilla_gan.ambient_dim == (28 * 28)  # for MNIST.
+    self.vanilla_gan = vanilla_gan
+    if discr_optimizer is None:
+      self.discr_optimizer = tf.train.AdamOptimizer(learning_rate=1e-4)
+    else:
+      self.discr_optimizer = discr_optimizer
+    if gen_optimizer is None:
+      self.gen_optimizer = tf.train.AdamOptimizer(learning_rate=1e-4)
+    else:
+      self.gen_optimizer = gen_optimizer
 
-def get_gan_and_ops(batch_size, latent_dim):
-  ambient_dim = 28 * 28  # for MNIST dataset.
-  data = tf.placeholder(shape=[batch_size, ambient_dim],
-                        dtype='float32', name='data')
+    self.build_graph()
+    self.sess = create_frugal_session()
 
-  gan = VanillaGan(ambient_dim, latent_dim)
-  gan_loss = gan.loss(data)
+  def build_graph(self):
+    self.data = tf.placeholder(
+        shape=[self.batch_size, self.vanilla_gan.ambient_dim],
+        dtype='float32', name='data')
 
-  print('\nGenerator variables:', gan.generator_vars, '\n')
-  print('\nDiscriminator variables:', gan.discriminator_vars, '\n')
+    self.loss = self.vanilla_gan.loss(self.data)
 
-  discr_train_op = (tf.train.AdamOptimizer(learning_rate=2e-4)
-                    .minimize(-gan_loss.value,
-                              var_list=gan.discriminator_vars))
-  gen_train_op = (tf.train.AdamOptimizer(learning_rate=2e-4)
-                  .minimize(gan_loss.value,
-                            var_list=gan.generator_vars))
-  return gan, Ops(data, gan_loss, discr_train_op, gen_train_op)
+    self.discr_train_op = self.discr_optimizer.minimize(
+        loss=-self.loss.value,
+        var_list=self.vanilla_gan.discriminator_vars)
+    self.gen_train_op = self.gen_optimizer.minimize(
+        loss=self.loss.value,
+        var_list=self.vanilla_gan.generator_vars)
 
+  def train(self, n_iters, ckpt_dir=None):
+    self.sess.run(tf.global_variables_initializer())
 
-def get_feed_dict(ops, batch_size):
-  while True:
-    X_batch, _ = MNIST.train.next_batch(batch_size)
-    # X_batch = np.where(X_batch > 0.5,
-    #                    np.ones_like(X_batch),
-    #                    np.zeros_like(X_batch))
-    yield {ops.data: X_batch}
+    if ckpt_dir is not None:
+      try:
+        restore_variables(self.sess, ALL_VARS, ckpt_dir)
+      except Exception as e:
+        print(e)
 
+    self.train_body(n_iters)
 
-def train(sess, gan, ops, feed_dict_gen, n_iters):
-  sess.run(tf.global_variables_initializer())
+    if ckpt_dir is not None:
+      save_variables(self.sess, ALL_VARS, ckpt_dir)
 
-  try:
-    restore_variables(sess, ALL_VARS, CKPT_DIR)
-
-  except Exception as e:
-    print(e)
-
+  def train_body(self, n_iters):
     pbar = trange(n_iters)
     for step in pbar:
-      ops_to_run = [ops.discr_train_op,
-                    ops.gen_train_op,
-                    ops.gan_loss.value,
-                    ops.gan_loss.error,
-                    gan.f_divergence._peep['discriminate_part'].value,
-                    gan.f_divergence._peep['discriminate_part'].error,
-                    gan.f_divergence._peep['generate_part'].value,
-                    gan.f_divergence._peep['generate_part'].error]
-      run_result = sess.run(ops_to_run, feed_dict=next(feed_dict_gen))
-      _, _, loss_val, loss_err, dp_val, dp_err, gp_val, gp_err = run_result
-      pbar.set_description(
-          'Loss {0:.2f} ({1:.2f}) - DP {2:.2f} ({3:.2f}) - '
-          'GP {4:.2f} ({5:.2f})'.format(
-              loss_val, loss_err, dp_val, dp_err, gp_val, gp_err))
+      X_batch, _ = MNIST.train.next_batch(self.batch_size)
+      feed_dict = {self.data: X_batch}
+      self.sess.run(self.discr_train_op, feed_dict)
+      self.sess.run(self.gen_train_op, feed_dict)
+      loss_val, loss_err = self.sess.run(
+          [self.loss.value, self.loss.error],
+          feed_dict)
+      pbar.set_description('Loss {0:.2f} ({1:.2f})'
+                           .format(loss_val, loss_err))
       if np.isnan(loss_val):
         break
 
-    # save_variables(sess, ALL_VARS, CKPT_DIR)
+  def evaluate(self, n_samples_to_show):
+    bernoulli_prob = self.vanilla_gan._generator(
+        n_samples=n_samples_to_show,
+        reuse=tf.AUTO_REUSE)
+    bernoulli_dist = tfd.Bernoulli(probs=bernoulli_prob)
+    sample = bernoulli_dist.sample()
+    sample_vals = self.sess.run(sample)
+    for sample_val in sample_vals:
+      image = get_image(sample_val)
+      image.show()
 
-
-def evaluate(sess, ops, gan, n_samples):
-  bernoulli_prob = gan._generator(n_samples=n_samples,
-                                  reuse=tf.AUTO_REUSE)
-  bernoulli_dist = tfd.Bernoulli(probs=bernoulli_prob)
-  sample = bernoulli_dist.sample()
-  sample_vals = sess.run(sample)
-  for sample_val in sample_vals:
-    image = get_image(sample_val)
-    image.show()
-
-
-def main(batch_size,
-         latent_dim,
-         n_iters,
-         n_samples_to_show):
-  gan, ops = get_gan_and_ops(batch_size, latent_dim)
-  sess = create_frugal_session()
-
-  feed_dict_gen = get_feed_dict(ops, batch_size)
-  train(sess, gan, ops, feed_dict_gen, n_iters)
-
-  evaluate(sess, ops, gan, n_samples_to_show)
+  def main(self, n_iters, ckpt_dir=None):
+    self.train(n_iters, ckpt_dir)
+    self.evaluate()
 
 
 if __name__ == '__main__':
 
-  main(batch_size=128,
-       latent_dim=100,
-       n_iters=100000,
-       n_samples_to_show=10)
+  vanilla_gan = VanillaGan(ambient_dim=(28 * 28),
+                           latent_dim=64)
+
+  test_case = TestVanillaGAN(batch_size=128,
+                             vanilla_gan=vanilla_gan)
+
+  test_case.main(n_iters=20000)
