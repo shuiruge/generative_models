@@ -1,4 +1,4 @@
-"""
+r"""
 Abstract
 --------
 Trying to figure out the Bayesian aspect of generative model (variational
@@ -9,36 +9,118 @@ Experiements
 ------------
 Parameters are set as follow:
 
-```python
-def experiment(n_data):
-  bijector_layers = [10 for _ in range(10)]
-  vae = VAE(ambient_dim=(28 * 28),
-            latent_dim=64,
-            bijector_layers=bijector_layers)
-  bayesian_aspect = BayesianAspect(batch_size=8,
-                                   vae=vae,
-                                   n_data=n_data,
-                                   label=3)
-  bayesian_aspect.train(n_iters=10000,
-                        ckpt_dir=None)
-  # ... other codes
-```
+    ```python
+    def experiment(n_data):
+      bijector_layers = [10 for _ in range(10)]
+      vae = VAE(ambient_dim=(28 * 28),
+                latent_dim=64,
+                bijector_layers=bijector_layers)
+      bayesian_aspect = BayesianAspect(batch_size=8,
+                                      vae=vae,
+                                      n_data=n_data,
+                                      label=3)
+      bayesian_aspect.train(n_iters=20000,
+                            ckpt_dir=None)
+      bayesian_aspect.evaluate()
+    ```
 
-1. When `n_data = 8`
-    - the entropy of encoder-distribution is about 85.0 (0.8);
-    - the entropy of decoder-distribution is about 47.0 (1.2).
+### `n_data = 8`
 
-2. When `n_data = 1024`
-    - the entropy of encoder-distribution is about 77.5 (0.8);
-    - the entropy of decoder-distribution is about 135 (1.6).
+    ```
+    ================== EVAL ENCODER ==================
+    Entropy of each datum in batch:
+        87.32 (0.90)
+        87.15 (1.08)
+        87.24 (1.03)
+        86.77 (1.21)
+        87.10 (0.88)
+        87.12 (0.97)
+        86.43 (1.03)
+        87.62 (1.10)
+
+    ================== EVAL DECODER ==================
+    Entropy of each datum in batch:
+        58.00 (1.47)
+    ```
+
+###  `n_data = 32`
+
+    ```
+    ================== EVAL ENCODER ==================
+    Entropy of each datum in batch:
+        83.96 (0.90)
+        85.61 (1.08)
+        85.05 (1.03)
+        84.80 (1.21)
+        84.42 (0.88)
+        87.14 (0.97)
+        84.78 (1.03)
+        85.90 (1.10)
+
+    ================== EVAL DECODER ==================
+    Entropy of each datum in batch:
+        60.42 (0.98)
+    ```
+
+###  `n_data = 128`
+
+    ```
+    ================== EVAL ENCODER ==================
+    Entropy of each datum in batch:
+        79.09 (0.90)
+        75.14 (1.08)
+        78.83 (1.03)
+        81.75 (1.21)
+        79.35 (0.88)
+        80.24 (0.97)
+        80.99 (1.03)
+        77.72 (1.10)
+
+    ================== EVAL DECODER ==================
+    Entropy of each datum in batch:
+        63.95 (1.28)
+  ```
+
+###  `n_data = 512`
+
+    ```
+    ================== EVAL ENCODER ==================
+    Entropy of each datum in batch:
+        79.80 (0.90)
+        81.16 (1.08)
+        78.60 (1.03)
+        81.29 (1.21)
+        79.74 (0.88)
+        82.96 (0.97)
+        81.29 (1.03)
+        79.21 (1.10)
+
+    ================== EVAL DECODER ==================
+    Entropy of each datum in batch:
+        58.11 (1.47)
+    ```
+
+###  `n_data = 2018`
+
+    ```
+    ================== EVAL ENCODER ==================
+    Entropy of each datum in batch:
+        76.18 (0.90)
+        79.82 (1.08)
+        81.03 (1.03)
+        74.96 (1.21)
+        76.98 (0.88)
+        79.24 (0.97)
+        76.16 (1.03)
+        77.15 (1.10)
+
+    ================== EVAL DECODER ==================
+    Entropy of each datum in batch:
+        71.39 (1.55)
+    ```
 
 Conclusion
 ----------
-Increasing the number of data, without changing the number of labels, will
-decrease the entropy of the encoder-distribution by 10%, increasing the
-confidence of encoding. But increase the entropy of the decoder-distribution
-by 200%, enlarging the varity of the generated samples.
-
 TODO
 """
 
@@ -102,18 +184,21 @@ class BayesianAspect(object):
 
   def get_training_data(self, n_data, label):
     training_data = []
-    while len(training_data) < n_data:
-      X_batch, y_batch = MNIST.train.next_batch(1)
-      X, y = X_batch[0], y_batch[0]
+    for i, (X, y) in enumerate(zip(MNIST.train.images,
+                                   MNIST.train.labels)):
       if np.argmax(y) == label:
         training_data.append(X)
+      if len(training_data) == n_data:
+        break
     training_data = np.array(training_data)
     return training_data
 
   def get_batch_generator(self):
     while True:
-      np.random.shuffle(self.training_data)
-      yield self.training_data[:self.batch_size]
+      # For shuffling without mutating `self.training_data`
+      training_data = self.training_data.copy()
+      np.random.shuffle(training_data)
+      yield training_data[:self.batch_size]
 
   def evaluate(self):
     self.evaluate_encoder()
@@ -124,7 +209,7 @@ class BayesianAspect(object):
     # shape: [self.batch_size]
     entropy = get_entropy(encoder_dist)
 
-    feed_dict = {self.data: next(self.test_vae.batch_generator)}
+    feed_dict = {self.data: self.training_data[:self.batch_size]}
     ent_vals, ent_errs = self.sess.run([entropy.value, entropy.error],
                                        feed_dict)
     print('\n================== EVAL ENCODER ==================\n')
@@ -133,20 +218,27 @@ class BayesianAspect(object):
       print('    {0:.2f} ({1:.2f})'.format(ent_val, ent_err))
 
   def evaluate_decoder(self):
-    latent = self.vae.prior.sample(1)
+    latent_template = self.vae.prior.sample(1)
+    latent = 0.1 * tf.ones_like(latent_template)
     decoder_dist = self.vae.decoder(latent, reuse=True)
     # shape: [self.batch_size]
     entropy = get_entropy(decoder_dist)
 
     ent_vals, ent_errs = self.sess.run([entropy.value, entropy.error])
     print('\n================== EVAL DECODER ==================\n')
-    print(decoder_dist)
     print('Entropy of each datum in batch:')
     for ent_val, ent_err in zip(ent_vals, ent_errs):
       print('    {0:.2f} ({1:.2f})'.format(ent_val, ent_err))
 
 
+def std_normal_entropy():
+  return 0.5 * np.log(2 * np.pi * np.exp(1))
+
+
 if __name__ == '__main__':
+
+  n_data = 8
+  print('Number of data:', n_data)
 
   bijector_layers = [10 for _ in range(10)]
   vae = VAE(ambient_dim=(28 * 28),
@@ -155,9 +247,9 @@ if __name__ == '__main__':
 
   bayesian_aspect = BayesianAspect(batch_size=8,
                                    vae=vae,
-                                   n_data=8,
+                                   n_data=n_data,
                                    label=3)
 
-  bayesian_aspect.train(n_iters=10000,
+  bayesian_aspect.train(n_iters=20000,
                         ckpt_dir=None)
   bayesian_aspect.evaluate()
