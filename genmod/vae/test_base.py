@@ -31,6 +31,7 @@ try:
 except ModuleNotFoundError:
   tfd = tf.contrib.distributions
   tfb = tfd.bijectors
+from tfutils.pyutils import inheritdocstring
 from tfutils.train import (save_variables, restore_variables, ALL_VARS,
                            create_frugal_session)
 from genmod.vae.base import BaseVAE
@@ -73,6 +74,7 @@ def get_iafs(layers, name='bjiectors', reuse=None):
     return bijectors
 
 
+@inheritdocstring
 class VAE(BaseVAE):
 
   def __init__(self,
@@ -96,8 +98,9 @@ class VAE(BaseVAE):
     with tf.variable_scope('encoder', reuse=reuse):
       hidden = ambient
       for hidden_layer in self.encoder_layers:
-        hidden = tf.layers.dense(hidden, hidden_layer,
-                                 activation=tf.nn.relu)
+        hidden = tf.layers.dense(hidden, hidden_layer)
+        hidden = tf.layers.batch_normalization(hidden)
+        hidden = tf.nn.leaky_relu(hidden)
       # Outputs in the fiber-bundle space
       output = tf.layers.dense(hidden, self.latent_dim * 2,
                                activation=None)
@@ -115,8 +118,9 @@ class VAE(BaseVAE):
     with tf.variable_scope('decoder', reuse=reuse):
       hidden = latent
       for hidden_layer in self.decoder_layers:
-        hidden = tf.layers.dense(hidden, hidden_layer,
-                                 activation=tf.nn.relu)
+        hidden = tf.layers.dense(hidden, hidden_layer)
+        hidden = tf.layers.batch_normalization(hidden)
+        hidden = tf.nn.leaky_relu(hidden)
       logits = tf.layers.dense(hidden, self.ambient_dim, activation=None)
 
       decoder_dist = tfd.Bernoulli(logits=logits)
