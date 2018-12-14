@@ -10,17 +10,21 @@ Experiements
 Parameters are set as follow:
 
     ```python
-    def experiment(n_data):
-      bijector_layers = [10 for _ in range(10)]
-      vae = VAE(ambient_dim=(28 * 28),
-                latent_dim=64,
-                bijector_layers=bijector_layers)
-      bayesian_aspect = BayesianAspect(batch_size=8,
-                                      vae=vae,
-                                      n_data=n_data,
-                                      label=3)
-      bayesian_aspect.train(n_iters=20000,
-                            ckpt_dir=None)
+    latent_
+    n_data = ...
+    batch_size = ...
+    label = ...
+    n_iters = ...
+    bijector_layers = [10 for _ in range(10)]
+    vae = VAE(ambient_dim=(28 * 28),
+              latent_dim=64,
+              bijector_layers=bijector_layers)
+    bayesian_aspect = BayesianAspect(batch_size=batch_size,
+                                     vae=vae,
+                                     n_data=n_data,
+                                     label=label)
+    bayesian_aspect.train(n_iters=n_iters,
+                          ckpt_dir=None)
       bayesian_aspect.evaluate()
     ```
 
@@ -28,100 +32,121 @@ Parameters are set as follow:
 
     ```
     ================== EVAL ENCODER ==================
+
     Entropy of each datum in batch:
-        87.32 (0.90)
-        87.15 (1.08)
-        87.24 (1.03)
-        86.77 (1.21)
-        87.10 (0.88)
-        87.12 (0.97)
-        86.43 (1.03)
-        87.62 (1.10)
+        86.13 (1.07)
+        85.08 (0.93)
+        ...
+    Mean: 86.95
 
     ================== EVAL DECODER ==================
+
     Entropy of each datum in batch:
-        58.00 (1.47)
+        80.88 (1.15)
+        70.04 (1.47)
+        ...
+    Mean: 69.85
     ```
 
 ###  `n_data = 32`
 
     ```
     ================== EVAL ENCODER ==================
+
     Entropy of each datum in batch:
-        83.96 (0.90)
-        85.61 (1.08)
-        85.05 (1.03)
-        84.80 (1.21)
-        84.42 (0.88)
-        87.14 (0.97)
-        84.78 (1.03)
-        85.90 (1.10)
+        83.89 (1.07)
+        84.67 (0.93)
+        ...
+    Mean: 84.39
 
     ================== EVAL DECODER ==================
+
     Entropy of each datum in batch:
-        60.42 (0.98)
+        88.74 (1.54)
+        78.72 (1.43)
+        ...
+    Mean: 67.35
     ```
 
 ###  `n_data = 128`
 
     ```
     ================== EVAL ENCODER ==================
+
     Entropy of each datum in batch:
-        79.09 (0.90)
-        75.14 (1.08)
-        78.83 (1.03)
-        81.75 (1.21)
-        79.35 (0.88)
-        80.24 (0.97)
-        80.99 (1.03)
-        77.72 (1.10)
+        80.82 (1.07)
+        80.14 (0.93)
+        ...
+    Mean: 80.76
 
     ================== EVAL DECODER ==================
+
     Entropy of each datum in batch:
-        63.95 (1.28)
-  ```
+        140.86 (1.41)
+        126.01 (1.36)
+        ...
+    Mean: 115.74
+    ```
 
 ###  `n_data = 512`
 
     ```
     ================== EVAL ENCODER ==================
+
     Entropy of each datum in batch:
-        79.80 (0.90)
-        81.16 (1.08)
-        78.60 (1.03)
-        81.29 (1.21)
-        79.74 (0.88)
-        82.96 (0.97)
-        81.29 (1.03)
-        79.21 (1.10)
+        74.89 (1.07)
+        76.00 (0.93)
+        ...
+    Mean: 76.39
 
     ================== EVAL DECODER ==================
+
     Entropy of each datum in batch:
-        58.11 (1.47)
+        59.16 (1.35)
+        56.49 (1.11)
+        ...
+    Mean: 60.44
     ```
 
 ###  `n_data = 2018`
 
     ```
     ================== EVAL ENCODER ==================
+
     Entropy of each datum in batch:
-        76.18 (0.90)
-        79.82 (1.08)
-        81.03 (1.03)
-        74.96 (1.21)
-        76.98 (0.88)
-        79.24 (0.97)
-        76.16 (1.03)
-        77.15 (1.10)
+        71.69 (1.07)
+        71.90 (0.93)
+        ...
+    Mean: 72.38
 
     ================== EVAL DECODER ==================
+
     Entropy of each datum in batch:
-        71.39 (1.55)
+        72.61 (1.65)
+        72.23 (1.05)
+        ...
+    Mean: 69.28
     ```
 
 Conclusion
 ----------
-TODO
+* Increasing the number of data regularly varies the entropy of the
+  distribution of encoder (from 87.0 to 72.4 for latent dimension 64).
+
+* This entropy is almost linear to the `log2` of the number of data, with
+  slop about `-2.0`.
+
+* Not regularly for the entropy of the distribution of decoder.
+
+* The final loss varies a bit around.
+
+* Varing the latent dimension (e.g. from 64 to 128) enlarges the entropy
+  of the distribution of encoder in magnitude (e.g. from 80 to 160). But
+  the linear relation between this entropy and the `log2` of the number of
+  data is not changed.
+
+* Varing the latent dimension (e.g. from 64 to 128) does not manifestly
+  change the entropy of the distribution of decoder in magnitude.
 """
 
 import os
@@ -216,10 +241,12 @@ class BayesianAspect(object):
     print('Entropy of each datum in batch:')
     for ent_val, ent_err in zip(ent_vals, ent_errs):
       print('    {0:.2f} ({1:.2f})'.format(ent_val, ent_err))
+    print('Mean: {0:.2f}'.format(np.mean(ent_vals)))
 
   def evaluate_decoder(self):
-    latent_template = self.vae.prior.sample(1)
-    latent = 0.1 * tf.ones_like(latent_template)
+    latent_template = tf.ones_like(self.vae.prior.sample())
+    rs = [0.1 * i for i in range(self.batch_size)]
+    latent = tf.stack([r * latent_template for r in rs])
     decoder_dist = self.vae.decoder(latent, reuse=True)
     # shape: [self.batch_size]
     entropy = get_entropy(decoder_dist)
@@ -229,27 +256,39 @@ class BayesianAspect(object):
     print('Entropy of each datum in batch:')
     for ent_val, ent_err in zip(ent_vals, ent_errs):
       print('    {0:.2f} ({1:.2f})'.format(ent_val, ent_err))
+    print('Mean: {0:.2f}'.format(np.mean(ent_vals)))
 
 
-def std_normal_entropy():
-  return 0.5 * np.log(2 * np.pi * np.exp(1))
+def normal_dist_entropy(scale):
+  return 0.5 * np.log(2 * np.pi * np.exp(1) * scale ** 2)
 
 
 if __name__ == '__main__':
 
-  n_data = 8
-  print('Number of data:', n_data)
+  from argparse import ArgumentParser
 
-  bijector_layers = [10 for _ in range(10)]
-  vae = VAE(ambient_dim=(28 * 28),
-            latent_dim=64,
-            bijector_layers=bijector_layers)
+  parser = ArgumentParser()
+  parser.add_argument('--n_data', type=int, help='Greater than batch_size.')
+  parser.add_argument('--latent_dim', type=int)
+  parser.add_argument('--batch_size', type=int, default=8)
+  parser.add_argument('--label', type=int, default=3)
+  parser.add_argument('--n_iters', type=int, default=30000)
+  args = parser.parse_args()
 
-  bayesian_aspect = BayesianAspect(batch_size=8,
-                                   vae=vae,
-                                   n_data=n_data,
-                                   label=3)
+  def do_experiment(args, bijector_layers=([10] * 10)):
+    vae = VAE(
+        ambient_dim=(28 * 28),
+        latent_dim=args.latent_dim,
+        bijector_layers=bijector_layers)
+    bayesian_aspect = BayesianAspect(
+        batch_size=args.batch_size,
+        vae=vae,
+        n_data=args.n_data,
+        label=args.label)
+    bayesian_aspect.train(
+        n_iters=args.n_iters,
+        ckpt_dir=None)
+    bayesian_aspect.evaluate()
 
-  bayesian_aspect.train(n_iters=20000,
-                        ckpt_dir=None)
-  bayesian_aspect.evaluate()
+  print(args)
+  do_experiment(args)
