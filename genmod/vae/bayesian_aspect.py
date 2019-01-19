@@ -152,7 +152,7 @@ Conclusion
 import os
 import numpy as np
 import tensorflow as tf
-from tfutils.monte_carlo_integral import monte_carlo_integrate
+from tfutils.distribution import get_entropy
 from genmod.utils.mnist.data import get_dataset
 from genmod.vae.test_base import VAE, TestVAE
 
@@ -166,25 +166,6 @@ tf.set_random_seed(SEED)
 SCRIPT_PATH = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(SCRIPT_PATH, '../../dat/')
 MNIST = get_dataset(os.path.join(DATA_DIR, 'MNIST'))
-
-
-def get_entropy(distribution, n_samples=32, name='entropy'):
-  """Returns the entropy of the distribution `distribution` as a Monte-Carlo
-  integral.
-
-  Args:
-    distribution: A `Distribution` instance.
-    n_samples: Positive integer.
-
-  Returns:
-    A `MonteCarloIntegral` instance.
-  """
-  with tf.name_scope(name):
-    samples = distribution.sample(n_samples)
-    # shape: # [n_samples] + batch-shape
-    integrands = - distribution.log_prob(samples)
-    # shape: batch-shape
-    return monte_carlo_integrate(integrands, axes=[0])
 
 
 class BayesianAspect(object):
